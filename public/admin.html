@@ -17,9 +17,8 @@
     <p class="eyebrow">Local studio dashboard</p>
     <h1 style="font-size:clamp(2.8rem,6vw,5.4rem)">Booking requests</h1>
     <p>Review requests in order received, then confirm or decline them. Confirmation sends the customer an email when SMTP is configured; otherwise a preview is saved to <code>data/outbox</code>.</p>
-    <div class="warning">The current local admin PIN is <strong>Password123</strong>. You can change it at any time by editing <code>ADMIN_PIN</code> in <code>settings.env</code>, then restarting the website.</div>
     <div class="admin-toolbar">
-      <label>Admin PIN <input id="admin-pin" type="password" value="Password123" /></label>
+      <label>Admin PIN <input id="admin-pin" type="password"/></label>
       <button class="button primary" id="load-bookings">Load bookings</button>
       <span id="admin-message"></span>
     </div>
