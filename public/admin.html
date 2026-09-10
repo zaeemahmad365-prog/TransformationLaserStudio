@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Studio Admin | Transformation Laser Studio</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+  <script defer src="admin.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html"><img src="assets/transformation-logo.png" alt="Transformation Laser Studio" /></a>
+    <a class="button ghost" href="index.html">Back to website</a>
+  </header>
+  <main class="admin-main">
+    <p class="eyebrow">Local studio dashboard</p>
+    <h1 style="font-size:clamp(2.8rem,6vw,5.4rem)">Booking requests</h1>
+    <p>Review requests in order received, then confirm or decline them. Confirmation sends the customer an email when SMTP is configured; otherwise a preview is saved to <code>data/outbox</code>.</p>
+    <div class="warning">The current local admin PIN is <strong>Password123</strong>. You can change it at any time by editing <code>ADMIN_PIN</code> in <code>settings.env</code>, then restarting the website.</div>
+    <div class="admin-toolbar">
+      <label>Admin PIN <input id="admin-pin" type="password" value="Password123" /></label>
+      <button class="button primary" id="load-bookings">Load bookings</button>
+      <span id="admin-message"></span>
+    </div>
+
+    <section class="accepted-export" aria-labelledby="accepted-export-title">
+      <div>
+        <p class="eyebrow">Accepted bookings</p>
+        <h2 id="accepted-export-title">Weekly Excel export</h2>
+        <p>Confirmed bookings are stored separately from booking requests. Choose a week to download the accepted appointments scheduled for that week as an Excel file.</p>
+      </div>
+      <div class="accepted-export-controls">
+        <label>Appointment week <input id="export-week" type="week" /></label>
+        <button class="button secondary" id="export-accepted">Export accepted week (.xlsx)</button>
+        <span id="export-message" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <div id="admin-list" class="admin-list"></div>
+  </main>
+</body>
+</html>

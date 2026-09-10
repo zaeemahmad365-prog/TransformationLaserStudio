@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Transformation Laser Studio — hair and beauty appointments, waxing, threading, eye treatments, nails and aesthetic treatments." />
+  <title>Transformation Laser Studio | Hair & Beauty</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="site-header" id="top">
+    <a class="brand" href="#top" aria-label="Transformation Laser Studio home">
+      <img src="assets/transformation-logo.png" alt="Transformation Laser Studio Hair & Beauty" />
+    </a>
+    <button class="menu-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
+    <nav id="nav" class="main-nav" aria-label="Primary navigation">
+      <a href="#welcome">Welcome</a>
+      <a href="#services">Services</a>
+      <a href="#booking">Book</a>
+      <a href="#contact">Contact</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" id="welcome">
+      <div class="hero-copy">
+        <p class="eyebrow">Laser Studio · Hair & Beauty</p>
+        <h1>Your beauty appointment, made beautifully simple.</h1>
+        <p class="lede">Explore our treatments, choose your preferred date and time, and send a booking request. Appointments are reviewed in the order received and confirmed by email.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#booking">Request an appointment</a>
+          <a class="button ghost" href="#services">View prices</a>
+        </div>
+        <div class="trust-row" aria-label="Booking highlights">
+          <span>Booking requests</span>
+          <span>Manual confirmation</span>
+          <span>Email updates</span>
+        </div>
+      </div>
+      <div class="hero-card" aria-hidden="true">
+        <span class="ornament">✦</span>
+        <p>Transformation</p>
+        <small>Laser Studio · Hair & Beauty</small>
+      </div>
+    </section>
+
+    <section class="section" id="services">
+      <div class="section-heading">
+        <p class="eyebrow">Treatments & prices</p>
+        <h2>Services</h2>
+      </div>
+      <div id="services-grid" class="services-grid" aria-live="polite"></div>
+    </section>
+
+    <section class="section booking-section" id="booking">
+      <div class="opening-hours" aria-label="Salon opening hours">
+        <p class="eyebrow">Salon opening hours</p>
+        <div class="hours-grid">
+          <div><strong>Monday–Saturday</strong><span>10am–7pm</span></div>
+          <div><strong>Sunday</strong><span>11am–7pm · Nails only</span></div>
+        </div>
+      </div>
+
+      <div class="section-heading">
+        <p class="eyebrow">Get Treated</p>
+        <h2>Request a booking</h2>
+      </div>
+
+      <div class="booking-layout">
+        <form id="booking-form" class="booking-form" novalidate>
+          <fieldset>
+            <legend>1. Your details</legend>
+            <div class="form-grid two-col">
+              <label>Full name
+                <input name="name" autocomplete="name" required maxlength="80" />
+              </label>
+              <label>Email
+                <input name="email" type="email" autocomplete="email" required maxlength="120" />
+              </label>
+              <label>Phone number
+                <input name="phone" type="tel" autocomplete="tel" required maxlength="30" />
+              </label>
+              <label>Preferred date
+                <input name="date" id="booking-date" type="date" required />
+              </label>
+              <label>Preferred time
+                <input name="time" type="time" required step="900" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>2. Choose treatments</legend>
+            <div class="service-picker">
+              <label>Category
+                <select id="category-select" aria-label="Service category"></select>
+              </label>
+              <label>Treatment
+                <select id="service-select" aria-label="Treatment"></select>
+              </label>
+              <label id="variant-wrap" class="hidden">Option
+                <select id="variant-select" aria-label="Treatment option"></select>
+              </label>
+              <button type="button" class="button secondary add-service" id="add-service">Add treatment</button>
+            </div>
+            <div id="selected-services" class="selected-services" aria-live="polite">
+              <p class="empty-state">No treatments added yet.</p>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>3. Notes</legend>
+            <label>Anything we should know? <span class="optional">Optional</span>
+              <textarea name="notes" rows="4" maxlength="800" placeholder="For example: preferred nail shape, accessibility needs, or a backup time."></textarea>
+            </label>
+          </fieldset>
+
+          <label class="consent">
+            <input type="checkbox" name="consent" required />
+            <span>I understand this is a booking request and the appointment is confirmed by email after the studio reviews it.</span>
+          </label>
+
+          <div id="form-message" class="form-message" role="status" aria-live="polite"></div>
+          <button class="button primary submit-button" type="submit">Send booking request</button>
+        </form>
+
+        <aside class="booking-summary" aria-label="Booking summary">
+          <p class="eyebrow">Your booking</p>
+          <h3>Summary</h3>
+          <div id="summary-lines" class="summary-lines"><span>No treatments selected</span></div>
+          <div class="money-row"><span>Treatment total</span><strong id="booking-total">£0.00</strong></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section contact-section" id="contact">
+      <div>
+        <p class="eyebrow">Questions before booking?</p>
+        <h2>Contact the studio</h2>
+        <p>For booking questions or appointment enquiries, contact the studio by email or phone.</p>
+      </div>
+      <div class="contact-cards">
+        <a class="contact-card" href="mailto:zaeemahmad365@gmail.com">
+          <span>Email</span>
+          <strong>zaeemahmad365@gmail.com</strong>
+        </a>
+        <a class="contact-card" href="tel:07719598265">
+          <span>Phone</span>
+          <strong>07719 598265</strong>
+        </a>
+        <a class="contact-card" 
+        href="https://www.google.com/maps/place/Transformation+Studio/@51.39373,-0.1139994,17z/data=!3m1!4b1!4m6!3m5!1s0x487606de87120ded:0x485c7ba6c4589e88!8m2!3d51.39373!4d-0.1139994!16s%2Fg%2F1tl4chpc?entry=ttu&g_ep=EgoyMDI2MDgyMy4wIKXMDSoASAFQAw%3D%3D"
+        target="_blank" rel="noopener noreferrer">
+          <span>Location</span>
+          <strong>754 London Rd, Thornton Heath CR7 6JA</strong>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <img src="assets/transformation-logo.png" alt="Transformation Laser Studio" />
+    <p>© <span id="year"></span> Transformation Laser Studio. Hair & Beauty.</p>
+    <a href="admin.html">Studio admin</a>
+  </footer>
+</body>
+</html>

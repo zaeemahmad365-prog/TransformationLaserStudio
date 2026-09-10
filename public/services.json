@@ -1,0 +1,311 @@
+[
+  {
+    "category": "Waxing Treatments",
+    "compact": true,
+    "items": [
+      {
+        "name": "1/2 Arms",
+        "price": 18
+      },
+      {
+        "name": "Full Arms",
+        "price": 25
+      },
+      {
+        "name": "1/2 Legs",
+        "price": 20
+      },
+      {
+        "name": "Full Legs",
+        "price": 35
+      },
+      {
+        "name": "Bikini Line",
+        "price": 20
+      },
+      {
+        "name": "Full Legs & Bikini",
+        "price": 50
+      },
+      {
+        "name": "Underarms",
+        "price": 10
+      },
+      {
+        "name": "Bikini Hollywood",
+        "price": 40
+      },
+      {
+        "name": "Lip or Chin",
+        "price": 5
+      },
+      {
+        "name": "Neck",
+        "price": 5
+      },
+      {
+        "name": "Eyebrows Wax",
+        "price": 7
+      },
+      {
+        "name": "Face Wax",
+        "price": 30
+      },
+      {
+        "name": "Face/Neck",
+        "price": 35
+      }
+    ]
+  },
+  {
+    "category": "Threading",
+    "compact": true,
+    "items": [
+      {
+        "name": "Eyebrows",
+        "price": 5
+      },
+      {
+        "name": "Upper Lip",
+        "price": 4
+      },
+      {
+        "name": "Chin",
+        "price": 5
+      },
+      {
+        "name": "Neck",
+        "price": 8
+      },
+      {
+        "name": "Full Face",
+        "price": 25
+      },
+      {
+        "name": "Full Face/Neck",
+        "price": 30
+      }
+    ]
+  },
+  {
+    "category": "Eye Treatments",
+    "compact": true,
+    "items": [
+      {
+        "name": "Eyelash Tint",
+        "price": 6
+      },
+      {
+        "name": "Eyebrow Tint",
+        "price": 6
+      },
+      {
+        "name": "Eyebrow Wax",
+        "price": 7
+      }
+    ]
+  },
+  {
+    "category": "Nails",
+    "compact": true,
+    "items": [
+      {
+        "name": "Full set Acrylic / Gel powder",
+        "variants": [
+          {
+            "label": "No Colour",
+            "price": 20
+          },
+          {
+            "label": "Normal Colour",
+            "price": 25
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 30
+          }
+        ]
+      },
+      {
+        "name": "Full set Ombre / French / White tip",
+        "price": 35
+      },
+      {
+        "name": "Full set Colour powder",
+        "price": 30
+      },
+      {
+        "name": "Dipping powder SNS",
+        "price": 30
+      },
+      {
+        "name": "Full set BIAB on natural nails",
+        "price": 30
+      },
+      {
+        "name": "Full set BIAB Extension",
+        "price": 35
+      },
+      {
+        "name": "Infill Acrylic / Gel powder",
+        "variants": [
+          {
+            "label": "No Colour",
+            "price": 15
+          },
+          {
+            "label": "Normal Colour",
+            "price": 20
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 25
+          }
+        ]
+      },
+      {
+        "name": "Infill BIAB",
+        "price": 25
+      },
+      {
+        "name": "Polish on natural nails",
+        "variants": [
+          {
+            "label": "Normal Colour",
+            "price": 15
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 20
+          }
+        ]
+      },
+      {
+        "name": "Polish on natural nails with take off shellac",
+        "variants": [
+          {
+            "label": "Normal Colour",
+            "price": 20
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 25
+          }
+        ]
+      },
+      {
+        "name": "Manicure",
+        "variants": [
+          {
+            "label": "No Colour",
+            "price": 15
+          },
+          {
+            "label": "Normal Colour",
+            "price": 20
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 25
+          }
+        ]
+      },
+      {
+        "name": "Pedicure",
+        "variants": [
+          {
+            "label": "No Colour",
+            "price": 25
+          },
+          {
+            "label": "Normal Colour",
+            "price": 30
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 35
+          }
+        ]
+      },
+      {
+        "name": "Two big Toes with Polish",
+        "variants": [
+          {
+            "label": "Normal Colour",
+            "price": 20
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 25
+          }
+        ]
+      },
+      {
+        "name": "Toe full set",
+        "variants": [
+          {
+            "label": "No Colour",
+            "price": 25
+          },
+          {
+            "label": "Normal Colour",
+            "price": 30
+          },
+          {
+            "label": "Shellac Colour",
+            "price": 35
+          }
+        ]
+      },
+      {
+        "name": "Take off Powder / BIAB",
+        "price": 10
+      },
+      {
+        "name": "Take off shellac",
+        "price": 8
+      },
+      {
+        "name": "Nails cut and file",
+        "price": 5
+      }
+    ]
+  },
+  {
+    "category": "Aesthetic Treatments",
+    "compact": true,
+    "items": [
+      {
+        "name": "Microneedling",
+        "description": "Improves skin texture, reduces fine lines, acne scars & large pores.",
+        "price": 0
+      },
+      {
+        "name": "Botox",
+        "description": "Smooths dynamic wrinkles for a younger, fresher appearance.",
+        "price": 0
+      },
+      {
+        "name": "Dermal Fillers",
+        "description": "Adds volume and contour to lips, cheeks, jawline & more.",
+        "price": 0
+      },
+      {
+        "name": "PRP (Platelet-Rich Plasma)",
+        "description": "The Vampire Facial, using your own plasma to boost collagen, treat dark circles, improve texture & reduce signs of ageing.",
+        "price": 0
+      },
+      {
+        "name": "Skin Boosters",
+        "description": "Deep hydration for radiant, glowing skin. Ideal for dull, tired or dehydrated skin.",
+        "price": 0
+      },
+      {
+        "name": "Polynucleotides",
+        "description": "Regenerates and repairs skin, reduces fine lines, wrinkles & pigmentation.",
+        "price": 0
+      }
+    ],
+    "disclaimer": "All treatments carried out by a fully qualified aesthetic practitioner."
+  }
+]
