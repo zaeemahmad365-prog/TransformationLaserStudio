@@ -190,3 +190,6 @@ footer a { color: var(--muted); }
   footer p { order: 3; flex-basis: 100%; }
   .booking-meta { grid-template-columns: 1fr; }
 }
+
+/* Keep authenticated controls hidden even when a layout rule sets display. */
+[hidden] { display: none !important; }
