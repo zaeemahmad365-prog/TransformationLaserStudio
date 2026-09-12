@@ -22,3 +22,9 @@ yarn-error.log*
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Private runtime data and Python caches
+data/
+__pycache__/
+*.pyc
+.venv/

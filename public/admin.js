@@ -1,6 +1,71 @@
 const money = n => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n);
 const esc = (s='') => String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-const pin = () => document.querySelector('#admin-pin').value;
+const passwordInput = document.querySelector('#admin-pin');
+const message = document.querySelector('#admin-message');
+let authenticated = false;
+
+function setAuthenticated(value) {
+  authenticated = value;
+  document.querySelector('#login-form').hidden = value;
+  document.querySelector('#logout').hidden = !value;
+  document.querySelector('#load-bookings').hidden = !value;
+  document.querySelector('#export-accepted').disabled = !value;
+  if (!value) {
+    document.querySelector('#admin-list').replaceChildren();
+    document.querySelector('#export-message').textContent = '';
+  }
+}
+
+async function api(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'X-CSRF-Protection': '1', ...options.headers }
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 401) setAuthenticated(false);
+    const fallback = response.status === 404
+      ? 'The booking service could not be found. Please contact the studio owner.'
+      : 'The booking service is unavailable. Please try again.';
+    const error = new Error(data.error || fallback);
+    error.status = response.status;
+    throw error;
+  }
+  return response;
+}
+
+document.querySelector('#login-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = document.querySelector('#login');
+  button.disabled = true;
+  message.textContent = 'Signing in…';
+  const password = passwordInput.value;
+  passwordInput.value = '';
+  try {
+    await api('/api/admin/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    await loadBookings();
+  } catch (error) {
+    setAuthenticated(false);
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector('#logout').addEventListener('click', async () => {
+  try {
+    await api('/api/admin/logout', { method: 'POST' });
+    setAuthenticated(false);
+    message.textContent = 'Signed out.';
+  } catch (error) {
+    message.textContent = error.message;
+  }
+});
 
 document.querySelector('#load-bookings').addEventListener('click', loadBookings);
 document.querySelector('#export-accepted').addEventListener('click', exportAcceptedWeek);
@@ -20,17 +85,11 @@ async function exportAcceptedWeek() {
   const week = document.querySelector('#export-week').value;
   const msg = document.querySelector('#export-message');
   if (!week) { msg.textContent = 'Choose a week first.'; return; }
-  if (!pin()) { msg.textContent = 'Enter the admin PIN first.'; return; }
+  if (!authenticated) { msg.textContent = 'Sign in first.'; return; }
 
   msg.textContent = 'Creating Excel file…';
   try {
-    const r = await fetch(`/api/admin/accepted-bookings/export?week=${encodeURIComponent(week)}`, {
-      headers: { 'X-Admin-Pin': pin() }
-    });
-    if (!r.ok) {
-      const data = await r.json().catch(() => ({}));
-      throw new Error(data.error || 'Could not export accepted bookings');
-    }
+    const r = await api(`/api/admin/accepted-bookings/export?week=${encodeURIComponent(week)}`);
 
     const blob = await r.blob();
     const disposition = r.headers.get('Content-Disposition') || '';
@@ -45,22 +104,24 @@ async function exportAcceptedWeek() {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    msg.textContent = `${count} accepted booking${count === 1 ? '' : 's'} exported. A copy is also saved in data/exports.`;
+    msg.textContent = `${count} accepted booking${count === 1 ? '' : 's'} exported.`;
   } catch (e) {
     msg.textContent = e.message;
   }
 }
 
 async function loadBookings() {
-  const msg = document.querySelector('#admin-message');
-  msg.textContent = 'Loading…';
+  message.textContent = 'Loading…';
   try {
-    const r = await fetch('/api/admin/bookings', { headers: { 'X-Admin-Pin': pin() } });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Could not load bookings');
+    const response = await api('/api/admin/bookings');
+    const data = await response.json();
+    setAuthenticated(true);
     render(data.bookings);
-    msg.textContent = `${data.bookings.length} request${data.bookings.length === 1 ? '' : 's'}`;
-  } catch (e) { msg.textContent = e.message; }
+    message.textContent = `${data.bookings.length} request${data.bookings.length === 1 ? '' : 's'}`;
+  } catch (error) {
+    document.querySelector('#admin-list').replaceChildren();
+    message.textContent = error.message;
+  }
 }
 
 function render(bookings) {
@@ -93,11 +154,19 @@ function render(bookings) {
 }
 
 async function updateBooking(id, status, note) {
-  const r = await fetch(`/api/admin/bookings/${encodeURIComponent(id)}`, {
-    method: 'POST', headers: { 'Content-Type':'application/json', 'X-Admin-Pin': pin() }, body: JSON.stringify({status, note})
-  });
-  const data = await r.json();
-  if (!r.ok) return alert(data.error || 'Update failed');
-  alert(data.emailSent ? `Booking ${status}. Customer email sent.` : `Booking ${status}. Email preview saved in data/outbox (SMTP is not configured).`);
-  loadBookings();
+  try {
+    const response = await api(`/api/admin/bookings/${encodeURIComponent(id)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, note })
+    });
+    const data = await response.json();
+    alert(data.emailSent ? `Booking ${status}. Customer email sent.`
+      : `Booking ${status}, but the customer email was not sent. Please contact the customer directly.`);
+    await loadBookings();
+  } catch (error) {
+    message.textContent = error.message;
+  }
 }
+
+setAuthenticated(false);
+loadBookings();
