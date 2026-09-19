@@ -1,180 +1,77 @@
-TRANSFORMATION LASER STUDIO — LOCAL WEBSITE
-==========================================
+TRANSFORMATION LASER STUDIO
+==========================
 
-WHAT IS INCLUDED
-- Responsive one-page customer website using your supplied logo.
-- Service and price list in £.
-- Compact/expandable Nails list.
-- Booking request form with multiple-treatment selection.
-- Automatic calculation of the selected treatment total.
-- Requests are reviewed in the order received.
-- Local Studio Admin page to review requests and confirm/decline them.
-- Confirmed bookings are copied into a separate accepted-bookings data file.
-- Studio Admin includes a weekly Excel (.xlsx) export for accepted appointments.
-- New booking notifications are addressed to zaeemahmad365@gmail.com.
-- Confirmation emails tell the customer their treatment(s), appointment date/time, and the studio enquiry contact details.
+The public website and Python booking API run together on Vercel. See
+DEPLOYMENT.md for the dashboard settings and required environment variables.
 
-SALON OPENING HOURS
-- Monday–Saturday: 10am–7pm
-- Sunday: 11am–7pm, Nails only
-The booking form and server both check these hours. Sunday requests are restricted to Nail treatments.
+ADMIN
+- Open /admin.html on the website and sign in with your private admin password.
+- ADMIN_PIN is the server environment variable name, for compatibility with
+  earlier local settings. It must contain a unique password of 16-256 characters.
+- There is no default password. Credentials are never published in JavaScript,
+  URLs, browser storage or server startup logs.
+- Login creates an HttpOnly session cookie lasting eight hours. Sign out revokes
+  it on the server. Changing ADMIN_PIN invalidates existing sessions after redeploy.
+- Login attempts are limited in shared storage: five per address and fifty
+  overall per fifteen minutes, including successful attempts.
+- Booking lists, status changes and Excel exports all require a valid session.
 
-RUN IT IN GOOGLE CHROME
-Windows:
-1. Make sure Python 3 is installed.
-2. Double-click run_windows.bat.
-3. The website should open automatically. If it opens in another browser, copy:
-   http://127.0.0.1:8000
-   into Google Chrome.
+LOCAL USE
+1. Install Python 3.12 or later.
+2. Run python -m pip install -r requirements.txt (also supplies Windows time zones).
+3. Copy .env.example to settings.env. Set a new private ADMIN_PIN.
+4. Use run_windows.bat, run_mac.command, run_linux.sh or python server.py.
+5. Open the address printed in the terminal (normally http://127.0.0.1:8000).
 
-macOS:
-1. Make sure Python 3 is installed.
-2. Double-click run_mac.command (you may need to allow it in Privacy & Security the first time).
-3. Open http://127.0.0.1:8000 in Google Chrome if Chrome is not your default browser.
+Local file settings are ignored on Vercel. Locally, process environment values
+win, then settings.env, then the legacy .env file. Restart after changing them.
+Keep HOST=127.0.0.1; the local HTTP launcher is for your own computer.
 
-Linux:
-1. Run ./run_linux.sh
-2. Open http://127.0.0.1:8000 in Google Chrome/Chromium.
+STORAGE
+With DATABASE_URL, bookings and admin sessions use private PostgreSQL storage.
+Without it, the local launcher uses data/bookings.json and data/admin-auth.json.
+Vercel requires DATABASE_URL and never falls back to JSON files or /tmp.
+The database is accessed only from Python; do not expose its URL in public files.
 
-ADMIN / BOOKING REVIEW
-- Admin page: http://127.0.0.1:8000/admin.html
-- Current local PIN: Password123
-- To change the PIN, open settings.env, change the ADMIN_PIN value, save it, then restart the website.
-- Requests are displayed oldest first so you can review them in the order received.
-- The booking-request cards work the same way as before.
-- When you confirm a booking, a separate copy is saved to data/accepted_bookings.json.
-- If a confirmed booking is later declined, it is removed from accepted_bookings.json so that file reflects currently accepted appointments.
-- Use the "Weekly Excel export" box to choose an appointment week and download all accepted bookings scheduled in that week.
-- The downloaded workbook is also saved automatically in data/exports using a name such as accepted-bookings-2026-W35.xlsx.
+Each create/update checks availability and saves in one transaction, preventing
+concurrent requests from overwriting each other. The PostgreSQL adapter keeps
+one locked JSON document for bookings, suitable for this small studio's volume.
+At larger volumes, migrate to indexed booking/treatment tables and pagination.
 
-EMAIL DELIVERY
-The website is configured so new booking notifications are addressed to:
-  zaeemahmad365@gmail.com
+Confirmed bookings are derived from the current booking records. The old
+accepted_bookings.json file is no longer used. Existing local bookings.json data
+continues to work. See DEPLOYMENT.md for importing it into PostgreSQL.
 
-For security, a Gmail password is not included in this download. Until Gmail SMTP is configured, outgoing messages are saved as .eml previews in:
-  data/outbox
+Weekly Excel exports include confirmed appointments scheduled in the selected
+week, not the week the request arrived. Downloads require admin authentication.
+A local export copy may also be saved to data/exports. On Vercel, exports are
+created in memory and downloaded directly; customer data is never a static file.
 
-To make emails arrive in the Gmail inbox and send customer confirmations:
-1. Open settings.env.
-2. Keep SMTP_USER=zaeemahmad365@gmail.com.
-3. Create a Google App Password for that Gmail account.
-4. Paste the App Password after SMTP_PASSWORD= (do not use the normal Gmail password).
-5. Save settings.env and restart the website.
+EMAIL
+Configure SALON_EMAIL and STUDIO_PHONE for studio contact details, and set
+SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD and SMTP_FROM for email delivery.
+For Gmail, use a Google App Password, never the account's normal password.
+The current SMTP implementation uses STARTTLS (normally port 587).
 
-The website sends:
-- A new-request notification to zaeemahmad365@gmail.com as soon as a customer submits a booking.
-- A confirmation or decline email to the customer's email address when you use the Studio Admin page.
-- Confirmation emails state that the appointment has been made for the selected treatment(s) on the confirmed date/time.
-- Customer emails include enquiries contact details:
-  Email: zaeemahmad365@gmail.com
-  Phone: 07719598265
+A new request triggers a studio notification. Confirm/decline triggers a customer
+email. If sending fails, the booking remains saved and Admin tells you to contact
+the customer directly. Email is best effort; there is no automatic retry queue.
+With no SMTP configuration, local mode writes .eml previews in data/outbox.
+Vercel does not claim to save previews or exports to a persistent local directory.
 
-EDITABLE SETTINGS
-Open settings.env to change the admin PIN, studio email, phone number, port, or Gmail sending settings. Restart the website after changing the file.
+TREATMENTS AND HOURS
+Edit public/services.json to change treatment names, descriptions or prices.
+The frontend and API verify the selected services against that catalogue.
+Monday-Saturday: 10am-7pm. Sunday: 11am-7pm, nail treatments only.
+Appointment times use Europe/London, including British Summer Time.
+Different treatments may share the same date/time; an exact treatment already
+pending or confirmed blocks another request for that slot. Confirmation also
+checks for a conflicting confirmed treatment.
 
-SAME-TIME BOOKING RULES
-The booking system is now treatment-aware. More than one customer can request and have an appointment confirmed for the same date and time when their treatments are different.
+TESTS
+python -m unittest discover -s tests -v
+node --check public/admin.js
 
-Examples:
-- Nails at 2:00pm + Waxing at 2:00pm: allowed.
-- Microneedling at 2:00pm + Botox at 2:00pm: allowed.
-- The same exact treatment at 2:00pm twice: blocked while the first request is pending or confirmed.
-
-If a booking contains several treatments, it clashes only if any exact treatment (category + treatment name + variant) is already pending or confirmed at that date/time. Price is not part of the availability check.
-
-The same rule is checked again when Studio Admin confirms a booking, so older or manually edited data cannot accidentally double-confirm an exact treatment at the same time.
-
-To change this logic later, open server.py and search for:
-  def treatment_key
-  requested_treatments
-  if status == 'confirmed'
-
-DATA
-Booking requests are stored locally in:
-  data/bookings.json
-
-Accepted/confirmed bookings are also stored separately in:
-  data/accepted_bookings.json
-
-Weekly Excel exports are saved in:
-  data/exports/
-
-The Excel export uses the appointment date to decide which week a booking belongs to. The spreadsheet contains booking ID, appointment date/time, customer name, email, phone, treatments, categories, total, notes, accepted time and original request time.
-
-Do not upload these files publicly without adding production-grade access controls and privacy/security measures because they contain customer information.
-
-CUSTOM DOMAIN LATER
-This is intentionally a local test build. Before publishing on a custom domain, use HTTPS, replace the default admin PIN with a strong private PIN, configure SMTP, and deploy the Python server behind a production web server or hosting platform.
-
-EDITING THE TREATMENT LIST
-The treatment catalogue is stored in:
-  public/services.json
-
-A new category called "Aesthetic Treatments" has been added there. The name is only a placeholder, so you can rename it by changing:
-  "category": "Aesthetic Treatments"
-
-Each aesthetic treatment has three editable fields:
-  "name"        = the treatment name shown on the website and in the booking form
-  "description" = the smaller description shown under the treatment name
-  "price"       = the numeric price used by the website and booking system
-
-The aesthetic prices are currently set to 0, which the website displays as £0.00 because all prices use the same pounds-sterling formatting. For example, change:
-  "price": 0
-To:
-  "price": 75
-for a £75.00 price.
-
-The practitioner disclaimer is also in public/services.json under the Aesthetic Treatments category:
-  "disclaimer": "All treatments carried out by a fully qualified aesthetic practitioner."
-
-After editing services.json, save the file and refresh the website. If the server is already running, the visible service list will refresh normally, but restart the server before submitting bookings after changing names or prices so the server reloads the allowed treatment catalogue.
-
-The display support for the small descriptions and category disclaimer is in:
-  public/app.js
-  public/styles.css
-Normally you do not need to edit these files when changing treatment names, descriptions or prices.
-
-ADMIN BOOKING EXPORT — FILES TO EDIT
------------------------------------
-The weekly accepted-booking export is split across these files:
-
-1. server.py
-   - Creates and maintains data/accepted_bookings.json.
-   - Copies a booking into accepted_bookings.json when you press Confirm booking.
-   - Removes it from that separate file if the booking is later declined.
-   - Builds the .xlsx file without needing an extra Python package.
-   - Filters exports by the appointment week chosen in Studio Admin.
-   - Saves a copy into data/exports and sends the same file to Chrome for download.
-
-2. public/admin.html
-   - Contains the visible "Weekly Excel export" section, week picker and export button.
-   - Change the wording or button label here if you want different text.
-
-3. public/admin.js
-   - Sets the week picker to the current week.
-   - Sends the chosen week and admin PIN to the server.
-   - Starts the .xlsx download in the browser and shows the export result message.
-
-4. public/styles.css
-   - Contains the .accepted-export styling so the new controls match the existing website design.
-
-5. data/accepted_bookings.json
-   - This is generated/maintained data, not website code.
-   - It stores only bookings that are currently confirmed.
-   - It is separate from data/bookings.json, which continues to hold the original booking requests and statuses.
-
-6. data/exports/
-   - Each time you export a week, the current version of that week's Excel workbook is saved here.
-   - Exporting the same week again refreshes/overwrites that week's workbook with the latest accepted bookings.
-
-
-BOOKING EXPORT FIX / TROUBLESHOOTING
-- This build repairs accepted-booking data automatically when the server starts and again before every weekly export.
-- If bookings.json already contains a booking with status "confirmed", it will be copied into data/accepted_bookings.json automatically.
-- Studio Admin now shows the exact accepted_bookings.json path used by the running server and the number of accepted bookings currently saved. This is useful if you have several extracted copies of the website.
-- If port 8000 is already being used by an older copy of the website, this build automatically tries 8001, 8002 and so on, then opens the correct new address in Chrome. Read the black command window to see the exact Website/Admin address.
-- Chrome caching is disabled for this local build so old admin JavaScript should not be reused after an update.
-- settings.env now overrides a legacy .env file. This means changing ADMIN_PIN in settings.env reliably changes the PIN after restart.
-- Weekly export still downloads even if Windows/Excel has locked the usual saved-copy filename. In that case a timestamped server copy is used where possible.
-
-If a weekly export shows 0 rows, check the APPOINTMENT date of the confirmed booking. The week selector is based on the appointment date, not the date the booking was confirmed.
+The HTTP tests use only synthetic bookings and mock email delivery. For a real
+PostgreSQL integration run, set TEST_DATABASE_URL to a disposable database; the
+integration tests use temporary keys and remove them afterwards.

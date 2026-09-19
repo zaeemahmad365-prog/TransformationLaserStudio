@@ -10,6 +10,13 @@ import ssl
 import sys
 import threading
 import webbrowser
+import uuid
+from functools import wraps
+from http.cookies import SimpleCookie, CookieError
+from zoneinfo import ZoneInfo
+
+import auth
+from storage import LocalStore, PostgresStore, StorageUnavailable, UnconfiguredStore
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from io import BytesIO
@@ -20,21 +27,18 @@ from urllib.parse import urlparse, unquote, parse_qs
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / 'public'
-DATA = ROOT / 'data'
-BOOKINGS = DATA / 'bookings.json'
-ACCEPTED_BOOKINGS = DATA / 'accepted_bookings.json'
+DATA = Path(os.getenv('TLS_DATA_DIR', str(ROOT / 'data')))
 EXPORTS = DATA / 'exports'
 OUTBOX = DATA / 'outbox'
-APP_BUILD = '2026-08-26-treatment-aware-booking-1'
+APP_BUILD = '2026-09-vercel-admin-sessions'
+ON_VERCEL = os.getenv('VERCEL') == '1'
 
 
 def load_settings():
-    """Load editable local settings.
-
-    A legacy .env file is read first for backwards compatibility, then
-    settings.env is read second and deliberately wins. This makes
-    settings.env the single easy-to-edit file for the local website.
-    """
+    """Process environment wins; local settings.env overrides the legacy .env."""
+    if ON_VERCEL:
+        return
+    supplied = set(os.environ)
     for env_file in (ROOT / '.env', ROOT / 'settings.env'):
         if not env_file.exists():
             continue
@@ -44,93 +48,66 @@ def load_settings():
                 continue
             key, value = line.split('=', 1)
             key, value = key.strip(), value.strip().strip('"').strip("'")
-            os.environ[key] = value
+            if key not in supplied:
+                os.environ[key] = value
 
 
 load_settings()
 HOST = os.getenv('HOST', '127.0.0.1')
 PORT = int(os.getenv('PORT', '8000'))
-SALON_EMAIL = os.getenv('SALON_EMAIL', 'zaeemahmad365@gmail.com')
-STUDIO_PHONE = os.getenv('STUDIO_PHONE', '07719598265')
-ADMIN_PIN = os.getenv('ADMIN_PIN', 'Password123')
+SALON_EMAIL = os.getenv('SALON_EMAIL') or 'zaeemahmad365@gmail.com'
+STUDIO_PHONE = os.getenv('STUDIO_PHONE') or '07719598265'
+ADMIN_PIN = os.getenv('ADMIN_PIN', '')
 SMTP_HOST = os.getenv('SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
 SMTP_USER = os.getenv('SMTP_USER', '')
 SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
-SMTP_FROM = os.getenv('SMTP_FROM', SMTP_USER or SALON_EMAIL)
+SMTP_FROM = os.getenv('SMTP_FROM') or SMTP_USER or SALON_EMAIL
 AUTO_OPEN = os.getenv('AUTO_OPEN', '1') == '1'
 
-DATA.mkdir(exist_ok=True)
-OUTBOX.mkdir(exist_ok=True)
-EXPORTS.mkdir(exist_ok=True)
-if not BOOKINGS.exists():
-    BOOKINGS.write_text('[]', encoding='utf-8')
-if not ACCEPTED_BOOKINGS.exists():
-    ACCEPTED_BOOKINGS.write_text('[]', encoding='utf-8')
+DATABASE_URL = os.getenv('DATABASE_URL', '')
+STORE = (PostgresStore(DATABASE_URL) if DATABASE_URL else
+         UnconfiguredStore() if ON_VERCEL else LocalStore(DATA))
+LOCAL_FILES = not ON_VERCEL and not DATABASE_URL
+COOKIE_NAME = '__Host-tls_admin' if ON_VERCEL else 'tls_admin'
 
-_lock = threading.Lock()
+
+class RequestError(Exception):
+    def __init__(self, status, message):
+        self.status = status
+        super().__init__(message)
+
+
+def api_errors(method):
+    @wraps(method)
+    def wrapped(self):
+        try:
+            return method(self)
+        except RequestError as exc:
+            return self.send_json(exc.status, {'error': str(exc)})
+        except StorageUnavailable:
+            # Do not print driver exceptions or return connection details.
+            return self.send_json(503, {'error': 'Booking storage is unavailable. Please contact the studio.'})
+    return wrapped
 
 
 def read_bookings():
-    with _lock:
-        try:
-            return json.loads(BOOKINGS.read_text(encoding='utf-8'))
-        except Exception:
-            return []
+    return STORE.read('bookings', [])
 
 
-def write_bookings(items):
-    with _lock:
-        tmp = BOOKINGS.with_suffix('.tmp')
-        tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding='utf-8')
-        tmp.replace(BOOKINGS)
-
-
-def read_accepted_bookings():
-    with _lock:
-        try:
-            return json.loads(ACCEPTED_BOOKINGS.read_text(encoding='utf-8'))
-        except Exception:
-            return []
-
-
-def write_accepted_bookings(items):
-    with _lock:
-        tmp = ACCEPTED_BOOKINGS.with_suffix('.tmp')
-        tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding='utf-8')
-        tmp.replace(ACCEPTED_BOOKINGS)
+def accepted_bookings(bookings):
+    accepted = []
+    for booking in bookings:
+        if booking.get('status') == 'confirmed':
+            snapshot = dict(booking)
+            snapshot['acceptedAt'] = booking.get('statusUpdatedAt') or booking.get('createdAt')
+            accepted.append(snapshot)
+    return sorted(accepted, key=lambda b: (b.get('date', ''), b.get('time', '')))
 
 
 def reconcile_accepted_bookings():
-    """Make accepted_bookings.json match confirmed records in bookings.json.
-
-    This self-heals older test data where a booking was confirmed before the
-    separate accepted-bookings file existed or if that file was missed.
-    """
-    bookings = read_bookings()
-    existing = {item.get('id'): item for item in read_accepted_bookings() if item.get('id')}
-    accepted = []
-    for booking in bookings:
-        if booking.get('status') != 'confirmed':
-            continue
-        snapshot = json.loads(json.dumps(booking))
-        previous = existing.get(booking.get('id'), {})
-        snapshot['acceptedAt'] = (
-            previous.get('acceptedAt')
-            or booking.get('statusUpdatedAt')
-            or booking.get('createdAt')
-            or datetime.now(timezone.utc).isoformat()
-        )
-        accepted.append(snapshot)
-    accepted.sort(key=lambda b: (b.get('date', ''), b.get('time', ''), b.get('acceptedAt', '')))
-    write_accepted_bookings(accepted)
-    return accepted
-
-
-def sync_accepted_booking(booking, accepted):
-    # The booking has already been written to bookings.json before this is
-    # called. Rebuild from that source of truth so the two files cannot drift.
-    return reconcile_accepted_bookings()
+    # Derive from the single source of truth instead of a second mutable file.
+    return accepted_bookings(read_bookings())
 
 
 def current_iso_week():
@@ -352,6 +329,9 @@ def send_email(to_addr, subject, text, tag):
             smtp.send_message(msg)
         return True
 
+    if not LOCAL_FILES:
+        return False
+    OUTBOX.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     safe = re.sub(r'[^A-Za-z0-9_-]+', '-', tag)[:50]
     (OUTBOX / f'{stamp}-{safe}.eml').write_text(msg.as_string(), encoding='utf-8')
@@ -418,12 +398,13 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stdout.write("[%s] %s\n" % (self.log_date_time_string(), format % args))
 
-    def send_json(self, status, payload):
+    def send_json(self, status, payload, headers=None):
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-store')
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -433,12 +414,14 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
         self.send_header('Content-Length', str(len(payload)))
         self.send_header('X-Export-Count', str(booking_count))
-        self.send_header('X-Saved-Copy', saved_copy)
-        self.send_header('Cache-Control', 'no-store')
+        if saved_copy:
+            self.send_header('X-Saved-Copy', saved_copy)
         self.end_headers()
         self.wfile.write(payload)
 
     def json_body(self):
+        if self.headers.get('Content-Type', '').split(';')[0].lower() != 'application/json':
+            return None
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if length <= 0 or length > 100_000:
@@ -447,34 +430,86 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             return None
 
-    def is_admin(self):
-        return self.headers.get('X-Admin-Pin', '') == ADMIN_PIN
+    def session_token(self):
+        try:
+            cookies = SimpleCookie()
+            cookies.load(self.headers.get('Cookie', ''))
+            return cookies[COOKIE_NAME].value if COOKIE_NAME in cookies else ''
+        except CookieError:
+            return ''
+
+    def require_admin(self):
+        if not auth.configured(ADMIN_PIN):
+            raise RequestError(503, 'Admin login is not configured. Contact the studio owner.')
+        if not auth.valid_session(STORE, self.session_token(), ADMIN_PIN):
+            raise RequestError(401, 'Please sign in to view bookings.')
+
+    def require_same_origin(self):
+        # A custom header + JSON prevent cross-origin form submissions. Check
+        # Origin too; no CORS permission is granted to other websites.
+        scheme = 'https' if ON_VERCEL else 'http'
+        expected = f"{scheme}://{self.headers.get('Host', '')}"
+        if (self.headers.get('Origin') != expected or
+                self.headers.get('X-CSRF-Protection') != '1'):
+            raise RequestError(403, 'Please use the admin page on this website.')
+
+    def session_cookie(self, token, max_age=auth.SESSION_SECONDS):
+        value = f'{COOKIE_NAME}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}'
+        return value + ('; Secure' if ON_VERCEL else '')
+
+    def login(self):
+        if not auth.configured(ADMIN_PIN):
+            raise RequestError(503, 'Admin login is not configured. Contact the studio owner.')
+        data = self.json_body()
+        if not isinstance(data, dict) or not isinstance(data.get('password'), str):
+            raise RequestError(400, 'Enter your admin password.')
+        address = (self.headers.get('X-Vercel-Forwarded-For', 'unknown') if ON_VERCEL
+                   else self.client_address[0])
+        retry = auth.login_limit(STORE, address[:200], ADMIN_PIN)
+        if retry:
+            return self.send_json(429, {'error': 'Too many login attempts. Try again in 15 minutes.'},
+                                  {'Retry-After': str(retry)})
+        if not auth.matches(data['password'], ADMIN_PIN):
+            raise RequestError(401, 'Incorrect admin password.')
+        token = auth.create_session(STORE, ADMIN_PIN, self.session_token())
+        return self.send_json(200, {'ok': True}, {'Set-Cookie': self.session_cookie(token)})
 
     def end_headers(self):
-        # This is a local testing build. Avoid Chrome serving stale admin JS
-        # after the website files are replaced with a newer version.
-        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
-        self.send_header('Pragma', 'no-cache')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'same-origin')
         super().end_headers()
 
+    def list_directory(self, path):
+        self.send_error(404)
+        return None
+
+    def do_HEAD(self):
+        # Never let inherited static handling route an API request to disk.
+        if urlparse(self.path).path.startswith('/api'):
+            self.send_response(405)
+            self.send_header('Allow', 'GET, POST')
+            self.end_headers()
+            return
+        return super().do_HEAD()
+
+    @api_errors
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == '/api/health':
-            return self.send_json(200, {'ok': True, 'build': APP_BUILD, 'emailConfigured': bool(SMTP_USER and SMTP_PASSWORD), 'salonEmail': SALON_EMAIL, 'dataDirectory': str(DATA), 'bookingsFile': str(BOOKINGS), 'acceptedBookingsFile': str(ACCEPTED_BOOKINGS)})
+            return self.send_json(200, {'ok': True, 'build': APP_BUILD})
         if path == '/api/admin/bookings':
-            if not self.is_admin():
-                return self.send_json(403, {'error': 'Incorrect admin PIN.'})
+            self.require_admin()
             bookings = sorted(read_bookings(), key=lambda b: b.get('createdAt',''))
             return self.send_json(200, {'bookings': bookings})
         if path == '/api/admin/accepted-bookings':
-            if not self.is_admin():
-                return self.send_json(403, {'error': 'Incorrect admin PIN.'})
+            self.require_admin()
             accepted = reconcile_accepted_bookings()
-            return self.send_json(200, {'acceptedBookings': accepted, 'count': len(accepted), 'file': str(ACCEPTED_BOOKINGS)})
+            return self.send_json(200, {'acceptedBookings': accepted, 'count': len(accepted)})
         if path == '/api/admin/accepted-bookings/export':
-            if not self.is_admin():
-                return self.send_json(403, {'error': 'Incorrect admin PIN.'})
+            self.require_admin()
             week_value = (parse_qs(parsed.query).get('week') or [current_iso_week()])[0]
             try:
                 start_date, end_date, week_label = iso_week_range(week_value)
@@ -492,35 +527,38 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 payload = build_accepted_bookings_xlsx(accepted, week_label, start_date, end_date)
             except Exception as exc:
-                print('Excel build error:', repr(exc))
-                return self.send_json(500, {'error': f'Could not build the Excel file: {exc}'})
+                print('Excel build error:', type(exc).__name__)
+                return self.send_json(500, {'error': 'Could not build the Excel file.'})
             filename = f'accepted-bookings-{week_label}.xlsx'
-            saved_copy = filename
-            try:
-                (EXPORTS / filename).write_bytes(payload)
-            except OSError as exc:
-                # A common Windows case is that an older export with the same
-                # name is open in Excel. Keep the download working and save a
-                # timestamped copy instead.
-                stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-                fallback = f'accepted-bookings-{week_label}-{stamp}.xlsx'
+            saved_copy = ''
+            if LOCAL_FILES:
                 try:
-                    (EXPORTS / fallback).write_bytes(payload)
-                    saved_copy = fallback
+                    EXPORTS.mkdir(parents=True, exist_ok=True)
+                    (EXPORTS / filename).write_bytes(payload)
+                    saved_copy = filename
                 except OSError:
-                    print('Excel copy save error:', repr(exc))
-                    saved_copy = ''
+                    # The download still works if a local copy is locked.
+                    pass
             return self.send_download(payload, filename, len(accepted), saved_copy)
+        if path.startswith('/api'):
+            return self.send_json(404, {'error': 'Not found.'})
         return super().do_GET()
 
+    @api_errors
     def do_POST(self):
         path = unquote(urlparse(self.path).path)
+        if path.startswith('/api/admin/'):
+            self.require_same_origin()
+        if path == '/api/admin/login':
+            return self.login()
+        if path == '/api/admin/logout':
+            auth.revoke_session(STORE, self.session_token())
+            return self.send_json(200, {'ok': True}, {'Set-Cookie': self.session_cookie('', 0)})
         if path == '/api/bookings':
             return self.create_booking()
         match = re.fullmatch(r'/api/admin/bookings/([A-Za-z0-9-]+)', path)
         if match:
-            if not self.is_admin():
-                return self.send_json(403, {'error': 'Incorrect admin PIN.'})
+            self.require_admin()
             return self.update_booking(match.group(1))
         return self.send_json(404, {'error': 'Not found.'})
 
@@ -541,7 +579,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(400, {'error': 'Please complete your name, email, phone, date and time.'})
         try:
             requested = datetime.strptime(f'{date} {time}', '%Y-%m-%d %H:%M')
-            if requested < datetime.now():
+            if requested.replace(tzinfo=ZoneInfo('Europe/London')) < datetime.now(ZoneInfo('Europe/London')):
                 return self.send_json(400, {'error': 'Please choose a future date and time.'})
             requested_minutes = requested.hour * 60 + requested.minute
             opening_minutes = 11 * 60 if requested.weekday() == 6 else 10 * 60
@@ -574,23 +612,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(400, {'error': 'Sundays are available for nail treatments only. Please choose Nails or select another day.'})
 
         total = round(sum(s['price'] for s in services), 2)
-        bookings = read_bookings()
-
-        requested_treatments = {treatment_key(service) for service in services}
-        for existing in bookings:
-            if existing.get('date') != date or existing.get('time') != time:
-                continue
-            if existing.get('status') not in ('pending', 'confirmed'):
-                continue
-            clashes = requested_treatments & booking_treatment_keys(existing)
-            if clashes:
-                conflict_names = ', '.join(sorted({key[1] + (f' — {key[2]}' if key[2] else '') for key in clashes}))
-                return self.send_json(409, {
-                    'error': f'That time already has a request or confirmed booking for {conflict_names}. You can choose a different treatment at the same time, or choose another time.'
-                })
-
         stamp = datetime.now(timezone.utc).isoformat()
-        booking_id = 'TLS-' + datetime.now().strftime('%y%m%d-%H%M%S-%f')[:19]
+        booking_id = 'TLS-' + uuid.uuid4().hex
         booking = {
             'id': booking_id,
             'status': 'pending',
@@ -606,58 +629,74 @@ class Handler(SimpleHTTPRequestHandler):
             'statusUpdatedAt': None,
             'studioNote': ''
         }
-        bookings.append(booking)
-        write_bookings(bookings)
+        def insert(bookings):
+            requested_treatments = {treatment_key(service) for service in services}
+            for existing in bookings:
+                if existing.get('date') != date or existing.get('time') != time:
+                    continue
+                if existing.get('status') not in ('pending', 'confirmed'):
+                    continue
+                clashes = requested_treatments & booking_treatment_keys(existing)
+                if clashes:
+                    conflict_names = ', '.join(sorted({key[1] + (f' — {key[2]}' if key[2] else '') for key in clashes}))
+                    raise RequestError(409, f'That time already has a request or confirmed booking for {conflict_names}. You can choose a different treatment at the same time, or choose another time.'
+                    )
+
+            bookings.append(booking)
+
+        STORE.update('bookings', [], insert)
         try:
             email_sent = salon_notification(booking)
         except Exception as e:
-            print('Email notification error:', repr(e))
+            print('Email notification error:', type(e).__name__)
             email_sent = False
         return self.send_json(201, {'ok': True, 'bookingId': booking_id, 'total': total, 'emailSent': email_sent})
 
     def update_booking(self, booking_id):
-        data = self.json_body() or {}
+        data = self.json_body()
+        if not isinstance(data, dict):
+            raise RequestError(400, 'Invalid request.')
         status = clean(data.get('status'), 20)
         note = clean(data.get('note'), 1200)
         if status not in ('confirmed', 'declined'):
             return self.send_json(400, {'error': 'Status must be confirmed or declined.'})
-        bookings = read_bookings()
-        target = None
-        for b in bookings:
-            if b.get('id') == booking_id:
-                target = b
-                break
-        if not target:
-            return self.send_json(404, {'error': 'Booking not found.'})
+        def change(bookings):
+            target = None
+            for b in bookings:
+                if b.get('id') == booking_id:
+                    target = b
+                    break
+            if not target:
+                raise RequestError(404, 'Booking not found.')
 
-        # Different treatments may share the same date/time. Only prevent a
-        # confirmation when another confirmed booking contains an exact same
-        # treatment (category + name + variant) in that slot.
-        if status == 'confirmed':
-            target_treatments = booking_treatment_keys(target)
-            for existing in bookings:
-                if existing.get('id') == booking_id or existing.get('status') != 'confirmed':
-                    continue
-                if existing.get('date') != target.get('date') or existing.get('time') != target.get('time'):
-                    continue
-                clashes = target_treatments & booking_treatment_keys(existing)
-                if clashes:
-                    conflict_names = ', '.join(sorted({key[1] + (f' — {key[2]}' if key[2] else '') for key in clashes}))
-                    return self.send_json(409, {
-                        'error': f'Cannot confirm this booking because {conflict_names} is already confirmed for {target.get("date")} at {target.get("time")}. Different treatments can still be confirmed at that same time.'
-                    })
+            # Different treatments may share the same date/time. Only prevent a
+            # confirmation when another confirmed booking contains an exact same
+            # treatment (category + name + variant) in that slot.
+            if status == 'confirmed':
+                target_treatments = booking_treatment_keys(target)
+                for existing in bookings:
+                    if existing.get('id') == booking_id or existing.get('status') != 'confirmed':
+                        continue
+                    if existing.get('date') != target.get('date') or existing.get('time') != target.get('time'):
+                        continue
+                    clashes = target_treatments & booking_treatment_keys(existing)
+                    if clashes:
+                        conflict_names = ', '.join(sorted({key[1] + (f' — {key[2]}' if key[2] else '') for key in clashes}))
+                        raise RequestError(409, f'Cannot confirm this booking because {conflict_names} is already confirmed for {target.get("date")} at {target.get("time")}. Different treatments can still be confirmed at that same time.'
+                        )
 
-        target['status'] = status
-        target['statusUpdatedAt'] = datetime.now(timezone.utc).isoformat()
-        target['studioNote'] = note
-        write_bookings(bookings)
-        accepted_items = sync_accepted_booking(target, status == 'confirmed')
+            target['status'] = status
+            target['statusUpdatedAt'] = datetime.now(timezone.utc).isoformat()
+            target['studioNote'] = note
+            return dict(target), len(accepted_bookings(bookings))
+
+        target, accepted_count = STORE.update('bookings', [], change)
         try:
             email_sent = customer_status_email(target, status, note)
         except Exception as e:
-            print('Customer email error:', repr(e))
+            print('Customer email error:', type(e).__name__)
             email_sent = False
-        return self.send_json(200, {'ok': True, 'emailSent': email_sent, 'acceptedCount': len(accepted_items), 'acceptedBookingsFile': str(ACCEPTED_BOOKINGS)})
+        return self.send_json(200, {'ok': True, 'emailSent': email_sent, 'acceptedCount': accepted_count})
 
 
 def open_browser(port=PORT):
@@ -688,16 +727,14 @@ def open_browser(port=PORT):
         pass
 
 
-if HOST not in ('127.0.0.1', 'localhost', '::1') and ADMIN_PIN == 'Password123':
-    raise RuntimeError('Set a strong ADMIN_PIN before binding the website to a non-localhost address.')
-
-
 if __name__ == '__main__':
-    # Repair/migrate accepted-booking data before the browser opens.
+    if HOST not in ('127.0.0.1', 'localhost', '::1'):
+        raise RuntimeError('Keep the local launcher on localhost. Use Vercel for HTTPS hosting.')
+    # Read confirmed bookings before the browser opens.
     try:
         repaired = reconcile_accepted_bookings()
     except Exception as exc:
-        print('Accepted-bookings reconciliation error:', repr(exc))
+        print('Accepted-bookings reconciliation error:', type(exc).__name__)
         repaired = []
 
     selected_port = PORT
@@ -718,12 +755,12 @@ if __name__ == '__main__':
     print(f'Build:   {APP_BUILD}')
     print(f'Website: http://{HOST}:{selected_port}')
     print(f'Admin:   http://{HOST}:{selected_port}/admin.html')
-    print(f'Admin PIN: {ADMIN_PIN}')
+    print('Admin: configured' if auth.configured(ADMIN_PIN) else 'Admin: set ADMIN_PIN to a private password of 16–256 characters.')
     print(f'Data:    {DATA}')
     print(f'Accepted bookings currently saved: {len(repaired)}')
     if SMTP_USER and SMTP_PASSWORD:
         print(f'Email: SMTP enabled; studio notifications -> {SALON_EMAIL}')
-    else:
+    elif LOCAL_FILES:
         print(f'Email: preview mode (SMTP not configured). Messages are saved in {OUTBOX}')
         print('To send real emails, add your Gmail App Password to SMTP_PASSWORD in settings.env.')
     print('Press Ctrl+C to stop the website.\n')
