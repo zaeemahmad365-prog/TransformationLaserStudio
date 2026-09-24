@@ -93,11 +93,21 @@ class ApiTests(unittest.TestCase):
                 self.assertNotIn(b'bookings.json', body)
         self.assertEqual(self.request('POST', '/api/admin/bookings/TLS-example', {'status': 'confirmed'})[0], 401)
 
-    def test_missing_or_short_password_fails_closed(self):
-        for password in ['', 'short']:
-            with patch.object(server, 'ADMIN_PIN', password):
+    def test_invalid_configured_password_fails_closed(self):
+        for password in ['', 'short', '1234567', '        ', ' 1234567 ', 'x' * 257]:
+            with self.subTest(password=password), patch.object(server, 'ADMIN_PIN', password):
                 self.assertEqual(self.request('POST', '/api/admin/login', {'password': password})[0], 503)
                 self.assertEqual(self.request('GET', '/api/admin/bookings')[0], 503)
+
+    def test_password_length_boundaries_allow_authenticated_access(self):
+        for password in ['test-8pw', 'x' * 256]:
+            with self.subTest(length=len(password)), patch.object(server, 'ADMIN_PIN', password):
+                self.assertEqual(self.request('GET', '/api/admin/bookings')[0], 401)
+                self.assertEqual(self.request('POST', '/api/admin/login', {'password': 'wrong'})[0], 401)
+                status, headers, _ = self.request('POST', '/api/admin/login', {'password': password})
+                self.assertEqual(status, 200)
+                cookie = headers['Set-Cookie'].split(';')[0]
+                self.assertEqual(self.request('GET', '/api/admin/bookings', cookie=cookie)[0], 200)
 
     def test_bad_password_and_invalid_payload(self):
         status, headers, _ = self.request('POST', '/api/admin/login', {'password': 'wrong'})

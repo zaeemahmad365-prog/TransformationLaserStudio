@@ -30,7 +30,7 @@ PUBLIC = ROOT / 'public'
 DATA = Path(os.getenv('TLS_DATA_DIR', str(ROOT / 'data')))
 EXPORTS = DATA / 'exports'
 OUTBOX = DATA / 'outbox'
-APP_BUILD = '2026-09-24-port-defaults'
+APP_BUILD = '2026-09-24-admin-min-8'
 ON_VERCEL = os.getenv('VERCEL') == '1'
 
 
@@ -757,7 +757,7 @@ if __name__ == '__main__':
     print(f'Build:   {APP_BUILD}')
     print(f'Website: http://{HOST}:{selected_port}')
     print(f'Admin:   http://{HOST}:{selected_port}/admin.html')
-    print('Admin: configured' if auth.configured(ADMIN_PIN) else 'Admin: set ADMIN_PIN to a private password of 16–256 characters.')
+    print('Admin: configured' if auth.configured(ADMIN_PIN) else 'Admin: set ADMIN_PIN to a private password of 8–256 characters.')
     print(f'Data:    {DATA}')
     print(f'Accepted bookings currently saved: {len(repaired)}')
     if SMTP_USER and SMTP_PASSWORD:

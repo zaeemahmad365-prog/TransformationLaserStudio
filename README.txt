@@ -7,7 +7,7 @@ DEPLOYMENT.md for the dashboard settings and required environment variables.
 ADMIN
 - Open /admin.html on the website and sign in with your private admin password.
 - ADMIN_PIN is the server environment variable name, for compatibility with
-  earlier local settings. It must contain a unique password of 16-256 characters.
+  earlier local settings. It must contain a unique password of 8-256 characters.
 - There is no default password. Credentials are never published in JavaScript,
   URLs, browser storage or server startup logs.
 - Login creates an HttpOnly session cookie lasting eight hours. Sign out revokes

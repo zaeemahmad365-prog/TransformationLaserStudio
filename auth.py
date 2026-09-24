@@ -10,7 +10,7 @@ EMPTY_AUTH = {'sessions': {}, 'limits': {}}
 
 
 def configured(password):
-    return isinstance(password, str) and 16 <= len(password.strip()) <= len(password) <= 256
+    return isinstance(password, str) and 8 <= len(password.strip()) <= len(password) <= 256
 
 
 def matches(supplied, password):

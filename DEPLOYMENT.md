@@ -43,7 +43,7 @@ In Settings → Environment Variables, add these for **Production**:
 
 | Variable | Value |
 | --- | --- |
-| `ADMIN_PIN` | A **new**, unique password of 16–256 characters from your password manager |
+| `ADMIN_PIN` | A **new**, unique password of 8–256 characters from your password manager |
 | `DATABASE_URL` | The private pooled PostgreSQL connection string with TLS |
 | `SALON_EMAIL` | The studio's notification/contact email |
 | `STUDIO_PHONE` | The studio's contact number |
