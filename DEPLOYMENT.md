@@ -53,6 +53,11 @@ In Settings → Environment Variables, add these for **Production**:
 | `SMTP_PASSWORD` | Its app password / SMTP credential |
 | `SMTP_FROM` | The sender address permitted by your SMTP provider |
 
+`HOST`, `PORT` and `AUTO_OPEN` are local launcher settings; do not add them to
+Vercel. In particular, `PORT` is separate from `SMTP_PORT`: leave `PORT` unset
+and set `SMTP_PORT` to `587` for Gmail. Missing or blank port values use the
+defaults (8000 locally and 587 for SMTP).
+
 The first two are required for admin access. SMTP is required for actual email
 delivery but does not prevent bookings from being saved. Keep all credentials
 server-side; do not add `NEXT_PUBLIC_`, `VITE_` or another frontend prefix.
@@ -103,6 +108,14 @@ branch and redeploy. Environment changes apply to new deployments.
 A 503 at login or while accessing bookings means required configuration/storage
 is unavailable. Check DATABASE_URL, database reachability and schema permissions.
 A 429 means the login limit was reached; wait for the Retry-After interval.
+
+If every API route, including `/api/health`, returns 500 with
+`FUNCTION_INVOCATION_FAILED`, open the failed request in Vercel's runtime Logs.
+Older builds can crash at startup if `PORT` is saved as an empty value. A
+traceback at `PORT = int(...)` with `ValueError: invalid literal for int()`
+identifies this issue. Remove the blank `PORT` variable and redeploy, or deploy
+the fix that defaults blank port settings. A successful build alone does not
+verify that the function can start with the production environment variables.
 
 ## Security and operations
 

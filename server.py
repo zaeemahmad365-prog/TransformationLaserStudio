@@ -30,7 +30,7 @@ PUBLIC = ROOT / 'public'
 DATA = Path(os.getenv('TLS_DATA_DIR', str(ROOT / 'data')))
 EXPORTS = DATA / 'exports'
 OUTBOX = DATA / 'outbox'
-APP_BUILD = '2026-09-vercel-admin-sessions'
+APP_BUILD = '2026-09-24-port-defaults'
 ON_VERCEL = os.getenv('VERCEL') == '1'
 
 
@@ -54,12 +54,14 @@ def load_settings():
 
 load_settings()
 HOST = os.getenv('HOST', '127.0.0.1')
-PORT = int(os.getenv('PORT', '8000'))
+# Dashboard variables can exist with an empty value; getenv's default only
+# handles a missing variable. Use the usual port when it is missing or blank.
+PORT = int(os.getenv('PORT', '').strip() or '8000')
 SALON_EMAIL = os.getenv('SALON_EMAIL') or 'zaeemahmad365@gmail.com'
 STUDIO_PHONE = os.getenv('STUDIO_PHONE') or '07719598265'
 ADMIN_PIN = os.getenv('ADMIN_PIN', '')
 SMTP_HOST = os.getenv('SMTP_HOST', 'smtp.gmail.com')
-SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+SMTP_PORT = int(os.getenv('SMTP_PORT', '').strip() or '587')
 SMTP_USER = os.getenv('SMTP_USER', '')
 SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
 SMTP_FROM = os.getenv('SMTP_FROM') or SMTP_USER or SALON_EMAIL

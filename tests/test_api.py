@@ -249,6 +249,27 @@ with patch.object(Path, 'mkdir', side_effect=AssertionError('Filesystem write'))
         result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_vercel_entrypoint_starts_with_blank_port_settings(self):
+        code = '''from api.index import handler
+import json
+import server
+print(json.dumps([server.PORT, server.SMTP_PORT]))
+'''
+        cases = [(None, None, [8000, 587]), ('', '', [8000, 587]),
+                 (' \t', ' \t', [8000, 587]), ('8123', '2525', [8123, 2525])]
+        for port, smtp_port, expected in cases:
+            with self.subTest(port=port, smtp_port=smtp_port):
+                env = {**os.environ, 'VERCEL': '1', 'ADMIN_PIN': '', 'DATABASE_URL': '',
+                       'PYTHONDONTWRITEBYTECODE': '1'}
+                for key, value in [('PORT', port), ('SMTP_PORT', smtp_port)]:
+                    env.pop(key, None)
+                    if value is not None:
+                        env[key] = value
+                result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, env=env,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), expected)
+
 
 @unittest.skipUnless(os.getenv('TEST_DATABASE_URL'), 'TEST_DATABASE_URL is not set')
 class PostgresIntegrationTests(unittest.TestCase):
