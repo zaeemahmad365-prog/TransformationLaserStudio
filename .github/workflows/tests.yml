@@ -36,3 +36,4 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://studio_test:disposable-ci-password@localhost:5432/studio_test?sslmode=disable
       - run: node --check public/admin.js
+      - run: node --check public/app.js
