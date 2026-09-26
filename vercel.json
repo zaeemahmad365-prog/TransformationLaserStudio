@@ -6,7 +6,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "includeFiles": "public/services.json",
+      "includeFiles": "public/{services.json,assets/transformation-logo.png}",
       "excludeFiles": "{data/**,tests/**,scripts/**,settings.env,.env,.env.*,*.env,.git/**}"
     }
   },

@@ -19,6 +19,8 @@ import auth
 from storage import LocalStore, PostgresStore, StorageUnavailable, UnconfiguredStore
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
+from email.utils import make_msgid
+from html import escape as html_escape
 from io import BytesIO
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -30,7 +32,7 @@ PUBLIC = ROOT / 'public'
 DATA = Path(os.getenv('TLS_DATA_DIR', str(ROOT / 'data')))
 EXPORTS = DATA / 'exports'
 OUTBOX = DATA / 'outbox'
-APP_BUILD = '2026-09-24-admin-min-8'
+APP_BUILD = '2026-09-26-booking-email-logo'
 ON_VERCEL = os.getenv('VERCEL') == '1'
 
 
@@ -316,12 +318,20 @@ def allowed_service_signatures():
 ALLOWED = allowed_service_signatures()
 
 
-def send_email(to_addr, subject, text, tag):
+def send_email(to_addr, subject, text, tag, *, html_body=None, logo_cid=None):
     msg = EmailMessage()
     msg['From'] = SMTP_FROM
     msg['To'] = to_addr
     msg['Subject'] = subject
     msg.set_content(text)
+
+    if html_body is not None:
+        msg.add_alternative(html_body, subtype='html')
+        if logo_cid:
+            msg.get_payload()[-1].add_related(
+                (PUBLIC / 'assets' / 'transformation-logo.png').read_bytes(),
+                maintype='image', subtype='png', cid=logo_cid,
+                disposition='inline', filename='transformation-logo.png')
 
     if SMTP_USER and SMTP_PASSWORD:
         context = ssl.create_default_context()
@@ -386,11 +396,30 @@ Treatment total: £{b['total']:.2f}
 For any enquiries, contact Transformation Laser Studio:
 Email: {SALON_EMAIL}
 Phone: {STUDIO_PHONE}
-
-Transformation Laser Studio
-Hair & Beauty
 """
-    return send_email(b['email'], subject, text, f"customer-{status}-{b['id']}")
+    # Keep a readable signature for plain-text email readers. In the HTML
+    # confirmation, the embedded logo replaces the text below the contact details.
+    plain_text = text + '\nTransformation Laser Studio\nHair & Beauty\n'
+    tag = f"customer-{status}-{b['id']}"
+    if status != 'confirmed':
+        return send_email(b['email'], subject, plain_text, tag)
+
+    logo_cid = make_msgid()
+    paragraphs = []
+    for paragraph in text.strip().split('\n\n'):
+        if paragraph.strip():
+            content = html_escape(paragraph).replace('\n', '<br>')
+            paragraphs.append(f'<p style="margin:0 0 16px;">{content}</p>')
+    html_body = f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:24px;background-color:#ffffff;color:#222222;">
+<div style="max-width:600px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;">
+{''.join(paragraphs)}
+<img src="cid:{logo_cid[1:-1]}" alt="Transformation Laser Studio — Hair &amp; Beauty"
+     width="300" height="88" style="display:block;width:300px;max-width:100%;height:auto;border:0;">
+</div></body></html>'''
+    return send_email(b['email'], subject, plain_text, tag,
+                      html_body=html_body, logo_cid=logo_cid)
 
 
 class Handler(SimpleHTTPRequestHandler):

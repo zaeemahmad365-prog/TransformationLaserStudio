@@ -1,5 +1,7 @@
 import concurrent.futures
 from contextlib import closing
+from email import policy
+from email.parser import BytesParser
 import http.client
 from io import BytesIO
 import json
@@ -225,6 +227,59 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(set(json.loads(body)), {'ok', 'build'})
         self.assertEqual(self.request('HEAD', '/api/admin/bookings')[0], 405)
+
+
+class EmailTests(unittest.TestCase):
+    def message(self, status):
+        booking = {
+            'id': 'TLS-synthetic', 'name': 'Sam <Guest> & Customer',
+            'email': 'customer@example.invalid', 'date': '2099-06-15', 'time': '12:00',
+            'services': [{'name': 'Brows & lashes', 'variant': '', 'price': 25}],
+            'total': 25,
+        }
+        with patch.object(server, 'SMTP_USER', 'sender@example.invalid'), \
+                patch.object(server, 'SMTP_PASSWORD', 'synthetic-mail-password'), \
+                patch.object(server, 'SMTP_FROM', 'sender@example.invalid'), \
+                patch.object(server, 'SALON_EMAIL', 'studio@example.invalid'), \
+                patch.object(server, 'STUDIO_PHONE', '00000000000'), \
+                patch.object(server.smtplib, 'SMTP') as smtp:
+            self.assertTrue(server.customer_status_email(
+                booking, status, 'Bring <ID> & arrive early.\nThank you.'))
+            client = smtp.return_value.__enter__.return_value
+            client.starttls.assert_called_once()
+            client.send_message.assert_called_once()
+            sent = client.send_message.call_args.args[0]
+            return BytesParser(policy=policy.default).parsebytes(sent.as_bytes())
+
+    def test_confirmation_embeds_logo_and_escapes_customer_content(self):
+        message = self.message('confirmed')
+        self.assertEqual(message['To'], 'customer@example.invalid')
+        self.assertEqual(message.get_content_type(), 'multipart/alternative')
+        plain = message.get_body(preferencelist=('plain',)).get_content()
+        html = message.get_body(preferencelist=('html',)).get_content()
+        self.assertIn('Sam <Guest> & Customer', plain)
+        self.assertIn('Sam &lt;Guest&gt; &amp; Customer', html)
+        self.assertIn('Bring &lt;ID&gt; &amp; arrive early.<br>Thank you.', html)
+        self.assertNotIn('<Guest>', html)
+        self.assertIn('2099-06-15 at 12:00', html)
+        self.assertIn('£25.00', html)
+        images = [part for part in message.walk() if part.get_content_type() == 'image/png']
+        self.assertEqual(len(images), 1)
+        logo = images[0]
+        self.assertEqual(logo.get_content_disposition(), 'inline')
+        self.assertEqual(logo.get_filename(), 'transformation-logo.png')
+        self.assertEqual(logo.get_payload(decode=True),
+                         (ROOT / 'public/assets/transformation-logo.png').read_bytes())
+        self.assertIn('src="cid:' + logo['Content-ID'][1:-1] + '"', html)
+        self.assertLess(html.index('Phone: 00000000000'), html.index('<img'))
+        self.assertNotIn('Transformation Laser Studio<br>Hair', html)
+        self.assertTrue(plain.endswith('Transformation Laser Studio\nHair & Beauty\n'))
+
+    def test_decline_keeps_plain_text_email(self):
+        message = self.message('declined')
+        self.assertEqual(message.get_content_type(), 'text/plain')
+        self.assertIn('could not be confirmed', message.get_content())
+        self.assertIn('Phone: 00000000000', message.get_content())
 
 
 class StorageTests(unittest.TestCase):
