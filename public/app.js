@@ -187,7 +187,7 @@ function setupBookingForm() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || 'Unable to send your request.');
       message.className = 'form-message success';
-      message.textContent = `Request ${body.bookingId} received. We’ll review your preferred time and email you when it is confirmed.`;
+      message.textContent = 'Thank you! Your booking request has been sent. We will contact you to confirm your appointment.';
       form.reset(); selected = []; renderSelected(); populateServices();
       const today = new Date();
       $('#booking-date').min = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0,10);

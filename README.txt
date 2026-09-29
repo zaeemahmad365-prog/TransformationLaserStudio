@@ -56,6 +56,9 @@ The current SMTP implementation uses STARTTLS (normally port 587).
 A new request triggers a studio notification. Confirm/decline triggers a customer
 email. If sending fails, the booking remains saved and Admin tells you to contact
 the customer directly. Email is best effort; there is no automatic retry queue.
+Confirmation emails include an HTML version with assets/transformation-logo.png
+embedded beneath the contact details, plus a plain-text alternative. The logo is
+included in the Vercel function bundle; no extra email setting is required.
 With no SMTP configuration, local mode writes .eml previews in data/outbox.
 Vercel does not claim to save previews or exports to a persistent local directory.
 
