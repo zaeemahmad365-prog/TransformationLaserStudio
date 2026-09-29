@@ -5,7 +5,10 @@ The public website and Python booking API run together on Vercel. See
 DEPLOYMENT.md for the dashboard settings and required environment variables.
 
 ADMIN
-- Open /admin.html on the website and sign in with your private admin password.
+- Bookmark the production admin page and sign in with your private admin password:
+  https://transformation-laser-studio.vercel.app/admin.html
+- The public website does not link to the admin page. Anyone with its address
+  can open the login screen; server-side authentication protects the bookings.
 - ADMIN_PIN is the server environment variable name, for compatibility with
   earlier local settings. It must contain a unique password of 8-256 characters.
 - There is no default password. Credentials are never published in JavaScript,
@@ -15,6 +18,22 @@ ADMIN
 - Login attempts are limited in shared storage: five per address and fifty
   overall per fifteen minutes, including successful attempts.
 - Booking lists, status changes and Excel exports all require a valid session.
+
+VERIFY LOGGED-OUT ACCESS
+1. Close any existing Incognito/private windows, then open a new one. Visit the
+   admin bookmark without signing in. Expect the login form and no booking data.
+2. In that private window, open each of these addresses:
+   https://transformation-laser-studio.vercel.app/api/admin/bookings
+   https://transformation-laser-studio.vercel.app/api/admin/accepted-bookings
+   https://transformation-laser-studio.vercel.app/api/admin/accepted-bookings/export?week=2026-W40
+   Each should return HTTP 401 and "Please sign in to view bookings.", with no
+   booking data or spreadsheet. To see the status, open Developer Tools > Network
+   before reloading the address, then select the request and check Status Code.
+3. Sign in to the admin page, then click Sign out and reload. Expect the login
+   form again. Reopen the bookings API address above; it should return 401 again.
+
+The automated HTTP tests also verify that booking updates without a valid
+session are rejected and that a signed-out session cannot be reused.
 
 LOCAL USE
 1. Install Python 3.12 or later.
