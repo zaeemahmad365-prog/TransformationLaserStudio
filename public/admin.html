@@ -15,8 +15,8 @@
   </header>
   <main class="admin-main">
     <p class="eyebrow">Studio dashboard</p>
-    <h1 style="font-size:clamp(2.8rem,6vw,5.4rem)">Booking requests</h1>
-    <p>Review requests in order received, then confirm or decline them.</p>
+    <h1 class="admin-title">Booking requests</h1>
+    <p>Review, reschedule and manage customer requests.</p>
     <div class="admin-toolbar">
       <form id="login-form" class="admin-toolbar">
         <label>Admin password <input id="admin-pin" type="password" autocomplete="current-password" maxlength="256" required /></label>
@@ -27,7 +27,31 @@
       <span id="admin-message" aria-live="polite"></span>
     </div>
 
-    <section class="accepted-export" aria-labelledby="accepted-export-title">
+    <div id="booking-controls" hidden>
+      <div class="booking-filter">
+        <label>Show requests
+          <select id="status-filter">
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="closed">Denied / Cancelled</option>
+            <option value="all">All requests</option>
+          </select>
+        </label>
+        <p id="booking-count" aria-live="polite"></p>
+        <span>Newest requests first</span>
+      </div>
+      <details class="retention-help">
+        <summary>90-day booking cleanup</summary>
+        <p>Confirmed and unanswered pending requests are removed 90 days after the appointment time. Denied or cancelled requests are removed 90 days after closing. Each request shows its removal date.</p>
+        <p>Use Edit to keep a request for an unresolved complaint or dispute. Older requests already on the website get seven days for review before their first removal. Emails and downloaded exports need separate cleanup.</p>
+      </details>
+    </div>
+
+    <div id="admin-list" class="admin-list"></div>
+
+    <details id="export-panel" class="export-panel" hidden>
+      <summary>Weekly Excel export</summary>
+      <section class="accepted-export" aria-labelledby="accepted-export-title">
       <div>
         <p class="eyebrow">Accepted bookings</p>
         <h2 id="accepted-export-title">Weekly Excel export</h2>
@@ -38,9 +62,69 @@
         <button class="button secondary" id="export-accepted" disabled>Export accepted week (.xlsx)</button>
         <span id="export-message" aria-live="polite"></span>
       </div>
-    </section>
-
-    <div id="admin-list" class="admin-list"></div>
+      </section>
+    </details>
   </main>
+
+  <dialog id="edit-dialog" aria-labelledby="edit-title">
+    <form id="edit-form">
+      <h2 id="edit-title">Edit request</h2>
+      <p id="edit-reference"></p>
+      <fieldset id="edit-fields">
+        <div class="form-grid two-col">
+          <label>Customer name <input id="edit-name" maxlength="80" required /></label>
+          <label>Email <input id="edit-email" type="email" maxlength="120" required /></label>
+          <label>Phone <input id="edit-phone" type="tel" maxlength="30" required /></label>
+          <label>Status <select id="edit-status">
+            <option value="pending">Pending</option><option value="confirmed">Confirmed</option>
+            <option value="declined">Denied</option><option value="cancelled">Cancelled</option>
+          </select></label>
+          <label>Appointment date <input id="edit-date" type="date" required /></label>
+          <label>Appointment time <input id="edit-time" type="time" min="10:00" max="19:00" required /></label>
+        </div>
+        <p class="field-hint">London time. Monday–Saturday: 10am–7pm. Sunday: 11am–7pm, nails only.</p>
+        <fieldset class="treatment-editor">
+          <legend>Treatments</legend>
+          <ul id="edit-services" class="edit-services"></ul>
+          <div class="add-treatment-row">
+            <label>Add a treatment <select id="add-treatment"><option value="">Choose a treatment</option></select></label>
+            <button id="add-treatment-button" class="button ghost" type="button">Add treatment</button>
+          </div>
+          <p><strong>Total: <span id="edit-total"></span></strong></p>
+        </fieldset>
+        <label>Customer notes <textarea id="edit-notes" rows="2" maxlength="800"></textarea></label>
+        <label><span id="internal-note-label">Internal note</span> <textarea id="edit-internal-note" rows="3" maxlength="1200"></textarea></label>
+        <p class="field-hint">Private to the studio. A reason is required when denying or cancelling a request.</p>
+        <label class="check-label"><input id="edit-hold" type="checkbox" /> Keep for an unresolved issue</label>
+        <label id="hold-reason-label" hidden>Reason to keep this request <textarea id="edit-hold-reason" rows="2" maxlength="500"></textarea></label>
+        <p id="release-hold-warning" class="field-hint" hidden>Removing the hold allows automatic deletion if the 90-day period has passed.</p>
+        <div class="customer-notification">
+          <label class="check-label"><input id="edit-notify" type="checkbox" /> Email the customer this booking update</label>
+          <label id="customer-message-label" hidden>Optional message to the customer <textarea id="edit-customer-message" rows="3" maxlength="1200"></textarea></label>
+          <p class="field-hint">An email is sent only when selected. Internal notes and hold reasons are never included.</p>
+        </div>
+      </fieldset>
+      <p id="edit-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="save-booking" class="button primary" type="submit">Save changes</button>
+        <button class="button ghost close-dialog" type="button">Close without saving</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="delete-dialog" aria-labelledby="delete-title">
+    <form id="delete-form">
+      <h2 id="delete-title">Permanently delete request?</h2>
+      <p id="delete-description"></p>
+      <p>This removes the request, its notes and cancellation reason. It cannot be undone and does not email the customer.</p>
+      <p id="delete-active-warning" class="warning" hidden>For an appointment you cannot provide, use Decline / Cancel and contact the customer first.</p>
+      <label class="check-label"><input id="confirm-delete" type="checkbox" required /> I understand this permanently removes the request.</label>
+      <p id="delete-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="delete-booking" class="button danger" type="submit">Permanently delete</button>
+        <button class="button ghost close-dialog" type="button">Keep request</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

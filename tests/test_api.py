@@ -174,7 +174,7 @@ class ApiTests(unittest.TestCase):
         booking_id = json.loads(body)['bookingId']
         self.assertEqual(self.request('POST', '/api/bookings', self.booking())[0], 409)
         status, _, body = self.request('POST', f'/api/admin/bookings/{booking_id}',
-                                       {'status': 'confirmed', 'note': 'Synthetic note'}, cookie)
+                                       {'status': 'confirmed', 'expectedRevision': 0, 'notifyCustomer': True, 'customerMessage': 'Synthetic note'}, cookie)
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)['emailSent'])
         status, _, body = self.request('GET', '/api/admin/bookings', cookie=cookie)
@@ -189,7 +189,7 @@ class ApiTests(unittest.TestCase):
             self.assertIn(b'Synthetic Customer', sheet)
             self.assertIn(b'&lt;script&gt;', sheet)
         self.assertFalse((Path(self.temporary.name) / 'exports').exists())
-        self.assertEqual(self.request('POST', f'/api/admin/bookings/{booking_id}', {'status': 'declined'}, cookie)[0], 200)
+        self.assertEqual(self.request('POST', f'/api/admin/bookings/{booking_id}', {'status': 'declined', 'expectedRevision': 1, 'internalNote': 'No practitioner available'}, cookie)[0], 200)
         body = self.request('GET', '/api/admin/accepted-bookings', cookie=cookie)[2]
         self.assertEqual(json.loads(body)['count'], 0)
 
@@ -227,6 +227,137 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(set(json.loads(body)), {'ok', 'build'})
         self.assertEqual(self.request('HEAD', '/api/admin/bookings')[0], 405)
+
+    def create_one(self, **changes):
+        payload = {**self.booking(), **changes}
+        status, _, body = self.request('POST', '/api/bookings', payload)
+        self.assertEqual(status, 201, body)
+        return json.loads(body)['bookingId']
+
+    def edit(self, booking_id, cookie, **changes):
+        return self.request('POST', f'/api/admin/bookings/{booking_id}', changes, cookie)
+
+    def test_newest_submission_first_even_after_edit(self):
+        older = self.create_one()
+        newer = self.create_one(time='13:00')
+        cookie = self.login()
+        self.assertEqual(self.edit(older, cookie, expectedRevision=0, name='Edited customer')[0], 200)
+        rows = json.loads(self.request('GET', '/api/admin/bookings', cookie=cookie)[2])['bookings']
+        self.assertEqual([b['id'] for b in rows], [newer, older])
+
+    def test_decline_reason_is_internal_and_email_is_explicit(self):
+        booking_id = self.create_one()
+        cookie = self.login()
+        with patch.object(server, 'customer_status_email', return_value=True) as send:
+            self.assertEqual(self.edit(booking_id, cookie, expectedRevision=0, status='declined')[0], 400)
+            status, _, body = self.edit(booking_id, cookie, expectedRevision=0, status='declined',
+                                      internalNote='PRIVATE staffing reason')
+            self.assertEqual(status, 200)
+            self.assertIsNone(json.loads(body)['emailSent'])
+            send.assert_not_called()
+            status, _, body = self.edit(booking_id, cookie, expectedRevision=1, status='pending',
+                                      date='2099-06-16', notifyCustomer=True,
+                                      customerMessage='Please confirm the new date.')
+            self.assertEqual(status, 200, body)
+            self.assertTrue(json.loads(body)['emailSent'])
+            self.assertEqual(send.call_args.args[1:], ('pending', 'Please confirm the new date.'))
+            saved = self.store.read('bookings', [])[0]
+            self.assertEqual(saved['internalNote'], 'PRIVATE staffing reason')
+            self.assertNotIn('closedAt', saved)
+
+    def test_reschedule_reopen_conflicts_and_server_validation(self):
+        booking_id = self.create_one()
+        self.create_one(time='13:00')
+        cookie = self.login()
+        for changes, expected in [({'time': '13:00'}, 409), ({'date': '2000-01-01'}, 400),
+                                  ({'time': '09:00'}, 400), ({'email': 'bad'}, 400),
+                                  ({'services': []}, 400), ({'services': [{'name': 'fake'}]}, 400)]:
+            with self.subTest(changes=changes):
+                self.assertEqual(self.edit(booking_id, cookie, expectedRevision=0, **changes)[0], expected)
+        original = self.store.read('bookings', [])[0]
+        self.assertEqual(original['revision'], 0)
+        self.assertEqual(self.edit(booking_id, cookie, expectedRevision=0, status='declined', internalNote='Unavailable')[0], 200)
+        self.assertEqual(self.edit(booking_id, cookie, expectedRevision=1, status='pending', time='13:00')[0], 409)
+        self.assertEqual(self.edit(booking_id, cookie, expectedRevision=1, status='confirmed', time='14:00')[0], 200)
+        self.assertEqual(self.store.read('bookings', [])[0]['createdAt'], original['createdAt'])
+        # The old slot becomes available; the rescheduled slot is now blocked.
+        self.assertEqual(self.request('POST', '/api/bookings', self.booking())[0], 201)
+        self.assertEqual(self.request('POST', '/api/bookings', {**self.booking(), 'time': '14:00'})[0], 409)
+
+    def test_concurrent_edits_reject_stale_changes(self):
+        booking_id = self.create_one()
+        cookie = self.login()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            statuses = list(pool.map(lambda value: self.edit(booking_id, cookie,
+                expectedRevision=0, phone=value)[0], ['11111111111', '22222222222']))
+        self.assertEqual(sorted(statuses), [200, 409])
+        self.assertEqual(self.store.read('bookings', [])[0]['revision'], 1)
+
+    def test_deletion_requires_session_csrf_confirmation_revision_and_no_hold(self):
+        booking_id = self.create_one()
+        cookie = self.login()
+        path = f'/api/admin/bookings/{booking_id}'
+        payload = {'confirmDelete': True, 'expectedRevision': 0}
+        self.assertEqual(self.request('DELETE', path, payload)[0], 401)
+        self.assertEqual(self.request('DELETE', path, payload, cookie, {'Origin': 'https://bad.invalid'})[0], 403)
+        self.assertEqual(self.request('DELETE', path, payload, cookie, {'X-CSRF-Protection': ''})[0], 403)
+        self.assertEqual(self.request('DELETE', path, {}, cookie)[0], 400)
+        self.assertEqual(self.edit(booking_id, cookie, expectedRevision=0, retentionHold=True,
+                                   holdReason='Unresolved complaint')[0], 200)
+        self.assertEqual(self.request('DELETE', path, {**payload, 'expectedRevision': 1}, cookie)[0], 409)
+        self.assertEqual(self.edit(booking_id, cookie, expectedRevision=1, retentionHold=False)[0], 200)
+        self.assertEqual(self.request('DELETE', path, payload, cookie)[0], 409)
+        with patch.object(server, 'customer_status_email') as send:
+            self.assertEqual(self.request('DELETE', path, {**payload, 'expectedRevision': 2}, cookie)[0], 200)
+            send.assert_not_called()
+        self.assertEqual(self.store.read('bookings', []), [])
+        self.assertEqual(json.loads(self.request('GET', '/api/admin/accepted-bookings', cookie=cookie)[2])['count'], 0)
+        self.assertEqual(self.request('DELETE', path, payload, cookie)[0], 404)
+
+    def test_cleanup_is_authenticated_for_cron_and_runs_on_read(self):
+        booking_id = self.create_one()
+        def age(rows):
+            rows[0].update(date='2020-01-01', status='confirmed', internalNote='Private old note')
+        self.store.update('bookings', [], age)
+        path = '/api/cron/booking-retention'
+        with patch.object(server, 'CRON_SECRET', ''):
+            self.assertEqual(self.request('GET', path)[0], 401)
+        with patch.object(server, 'CRON_SECRET', 'synthetic-cron-secret-only-for-tests'):
+            self.assertEqual(self.request('GET', path)[0], 401)
+            self.assertEqual(len(self.store.read('bookings', [])), 1)
+            status, _, body = self.request('GET', path, headers={'Authorization': 'Bearer synthetic-cron-secret-only-for-tests'})
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['deletedCount'], 1)
+            self.assertNotIn(booking_id.encode(), body)
+        self.create_one()
+        self.store.update('bookings', [], age)
+        cookie = self.login()
+        self.assertEqual(json.loads(self.request('GET', '/api/admin/bookings', cookie=cookie)[2])['bookings'], [])
+        self.assertEqual(self.store.read('bookings', []), [])
+
+    def test_reschedule_updates_export_week_and_reprices_services(self):
+        booking_id = self.create_one()
+        cookie = self.login()
+        replacement = self.booking(1)['services']
+        self.assertEqual(self.edit(booking_id, cookie, expectedRevision=0, date='2099-06-23',
+                                  status='confirmed', services=replacement)[0], 200)
+        saved = self.store.read('bookings', [])[0]
+        self.assertEqual(saved['total'], replacement[0]['price'])
+        for date, count in [('2099-06-15', '0'), ('2099-06-23', '1')]:
+            year, week, _ = server.datetime.strptime(date, '%Y-%m-%d').isocalendar()
+            status, headers, _ = self.request('GET', f'/api/admin/accepted-bookings/export?week={year}-W{week:02}', cookie=cookie)
+            self.assertEqual(status, 200)
+            self.assertEqual(headers['X-Export-Count'], count)
+
+    def test_hold_can_be_added_to_past_booking_without_rescheduling(self):
+        booking_id = self.create_one()
+        self.store.update('bookings', [], lambda rows: rows[0].update(date='2026-09-01'))
+        cookie = self.login()
+        status, _, body = self.edit(booking_id, cookie, expectedRevision=0, retentionHold=True,
+                                   holdReason='Complaint under review')
+        self.assertEqual(status, 200, body)
+        self.assertTrue(self.store.read('bookings', [])[0]['retentionHold'])
+
 
 
 class EmailTests(unittest.TestCase):

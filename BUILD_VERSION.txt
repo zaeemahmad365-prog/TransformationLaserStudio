@@ -1,4 +1,3 @@
-Transformation Laser Studio fixed build
-Build: 2026-08-25-admin-login-fix
-Default port: 8765
-Default admin PIN: Password123
+Transformation Laser Studio
+Build: 2026-10-14-admin-booking-management
+See README.txt for admin access and booking retention.

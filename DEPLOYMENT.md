@@ -44,6 +44,7 @@ In Settings → Environment Variables, add these for **Production**:
 | Variable | Value |
 | --- | --- |
 | `ADMIN_PIN` | A **new**, unique password of 8–256 characters from your password manager |
+| `CRON_SECRET` | A separate random secret, at least 32 characters, for daily booking cleanup |
 | `DATABASE_URL` | The private pooled PostgreSQL connection string with TLS |
 | `SALON_EMAIL` | The studio's notification/contact email |
 | `STUDIO_PHONE` | The studio's contact number |
@@ -58,7 +59,7 @@ Vercel. In particular, `PORT` is separate from `SMTP_PORT`: leave `PORT` unset
 and set `SMTP_PORT` to `587` for Gmail. Missing or blank port values use the
 defaults (8000 locally and 587 for SMTP).
 
-The first two are required for admin access. SMTP is required for actual email
+ADMIN_PIN and DATABASE_URL are required for admin access. SMTP is required for actual email
 delivery but does not prevent bookings from being saved. Keep all credentials
 server-side; do not add `NEXT_PUBLIC_`, `VITE_` or another frontend prefix.
 Mark secrets Sensitive in Vercel where available. Never commit settings.env or
@@ -116,6 +117,39 @@ traceback at `PORT = int(...)` with `ValueError: invalid literal for int()`
 identifies this issue. Remove the blank `PORT` variable and redeploy, or deploy
 the fix that defaults blank port settings. A successful build alone does not
 verify that the function can start with the production environment variables.
+
+## Booking retention schedule
+
+`vercel.json` calls `/api/cron/booking-retention` once a day at 03:00 UTC.
+Vercel automatically supplies `Authorization: Bearer <CRON_SECRET>` when the
+Production variable is configured. Generate a new random secret of 32–64
+characters, save it as a Sensitive Production environment variable, and redeploy.
+Do not reuse the admin password, commit the value or put it in a URL.
+
+The endpoint rejects missing/incorrect credentials and returns only a deletion
+count, with no customer details. Confirm a successful invocation in Settings >
+Cron Jobs / runtime logs after deployment. On Hobby, execution may occur within
+the scheduled hour. Overlapping runs are safe because pruning uses the same
+locked storage transaction as booking updates.
+
+Until CRON_SECRET is configured, the scheduled call returns 401 without touching
+data. Automatic cleanup still runs on authenticated booking reads/exports and
+successful new booking submissions; an idle website will wait for that activity.
+Do not describe the daily schedule as operational until its invocation succeeds.
+
+Existing records receive a seven-day review window on first cleanup. Use the All
+requests view to flag unresolved complaints/disputes with Keep for an unresolved
+issue. New records follow the 90-day rule immediately. Held or incomplete records
+remain for manual review; no date is guessed. See README.txt for the full policy.
+
+Emails, downloaded spreadsheets and backups are separate copies. Review the email
+provider, local outbox/exports and database backup settings against the documented
+policy. Purging the active booking document cannot remove delivered emails,
+downloaded files or provider snapshots. Reapply cleanup before exposing a restored
+database and review records that were manually deleted before the restore.
+
+References: [Vercel cron security](https://vercel.com/docs/cron-jobs/manage-cron-jobs),
+[ICO storage limitation](https://ico.org.uk/for-organisations/advice-for-small-organisations/information-security/data-storage-advice/).
 
 ## Security and operations
 
