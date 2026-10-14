@@ -3,6 +3,9 @@
   "framework": null,
   "buildCommand": "",
   "outputDirectory": "public",
+  "crons": [
+    { "path": "/api/cron/booking-retention", "schedule": "0 3 * * *" }
+  ],
   "functions": {
     "api/index.py": {
       "maxDuration": 60,

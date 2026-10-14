@@ -16,6 +16,8 @@ from http.cookies import SimpleCookie, CookieError
 from zoneinfo import ZoneInfo
 
 import auth
+from booking_rules import InvalidBooking, text_field, validate_booking
+from retention import booking_view, prune_bookings
 from storage import LocalStore, PostgresStore, StorageUnavailable, UnconfiguredStore
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
@@ -32,7 +34,7 @@ PUBLIC = ROOT / 'public'
 DATA = Path(os.getenv('TLS_DATA_DIR', str(ROOT / 'data')))
 EXPORTS = DATA / 'exports'
 OUTBOX = DATA / 'outbox'
-APP_BUILD = '2026-09-26-booking-email-logo'
+APP_BUILD = '2026-10-14-admin-booking-management'
 ON_VERCEL = os.getenv('VERCEL') == '1'
 
 
@@ -62,6 +64,7 @@ PORT = int(os.getenv('PORT', '').strip() or '8000')
 SALON_EMAIL = os.getenv('SALON_EMAIL') or 'zaeemahmad365@gmail.com'
 STUDIO_PHONE = os.getenv('STUDIO_PHONE') or '07719598265'
 ADMIN_PIN = os.getenv('ADMIN_PIN', '')
+CRON_SECRET = os.getenv('CRON_SECRET', '')
 SMTP_HOST = os.getenv('SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', '').strip() or '587')
 SMTP_USER = os.getenv('SMTP_USER', '')
@@ -89,6 +92,8 @@ def api_errors(method):
             return method(self)
         except RequestError as exc:
             return self.send_json(exc.status, {'error': str(exc)})
+        except InvalidBooking as exc:
+            return self.send_json(400, {'error': str(exc)})
         except StorageUnavailable:
             # Do not print driver exceptions or return connection details.
             return self.send_json(503, {'error': 'Booking storage is unavailable. Please contact the studio.'})
@@ -96,7 +101,34 @@ def api_errors(method):
 
 
 def read_bookings():
-    return STORE.read('bookings', [])
+    def retained(bookings):
+        prune_bookings(bookings)
+        return [booking_view(booking) for booking in bookings]
+    return STORE.update('bookings', [], retained)
+
+
+def check_availability(bookings, target):
+    if target.get('status') not in ('pending', 'confirmed'):
+        return
+    for existing in bookings:
+        if existing.get('id') == target.get('id') or existing.get('status') not in ('pending', 'confirmed'):
+            continue
+        if (existing.get('date'), existing.get('time')) != (target['date'], target['time']):
+            continue
+        clashes = booking_treatment_keys(target) & booking_treatment_keys(existing)
+        if clashes:
+            names = ', '.join(sorted({key[1] + (f' — {key[2]}' if key[2] else '') for key in clashes}))
+            raise RequestError(409, f'That time already has a pending or confirmed booking for {names}. Choose another time or treatment.')
+
+
+def checked_target(bookings, booking_id, data):
+    target = next((booking for booking in bookings if booking.get('id') == booking_id), None)
+    if target is None:
+        raise RequestError(404, 'Booking not found. It may have been deleted. Refresh bookings.')
+    revision = data.get('expectedRevision')
+    if type(revision) is not int or revision != target.get('revision', 0):
+        raise RequestError(409, 'This booking has changed. Close the form and refresh bookings before trying again.')
+    return target
 
 
 def accepted_bookings(bookings):
@@ -379,6 +411,12 @@ def customer_status_email(b, status, note):
     if status == 'confirmed':
         subject = f"Your Transformation Laser Studio appointment is confirmed — {b['date']} at {b['time']}"
         status_text = f"Your appointment has been made for the following treatment(s) on {b['date']} at {b['time']}."
+    elif status == 'cancelled':
+        subject = f"Your Transformation Laser Studio appointment has been cancelled — {b['id']}"
+        status_text = f"Your appointment on {b['date']} at {b['time']} has been cancelled. Please contact the studio to arrange another date."
+    elif status == 'pending':
+        subject = f"Your updated Transformation Laser Studio booking request — {b['id']}"
+        status_text = f"Your request is now for {b['date']} at {b['time']}. This is a pending request; the appointment is not yet confirmed."
     else:
         subject = f"Update on your Transformation Laser Studio booking request — {b['id']}"
         status_text = "We’re sorry, but the requested appointment time could not be confirmed. Please contact the studio or submit another request for a different date/time."
@@ -520,7 +558,7 @@ class Handler(SimpleHTTPRequestHandler):
         # Never let inherited static handling route an API request to disk.
         if urlparse(self.path).path.startswith('/api'):
             self.send_response(405)
-            self.send_header('Allow', 'GET, POST')
+            self.send_header('Allow', 'GET, POST, DELETE')
             self.end_headers()
             return
         return super().do_HEAD()
@@ -531,9 +569,14 @@ class Handler(SimpleHTTPRequestHandler):
         path = parsed.path
         if path == '/api/health':
             return self.send_json(200, {'ok': True, 'build': APP_BUILD})
+        if path == '/api/cron/booking-retention':
+            if not CRON_SECRET or not auth.matches(self.headers.get('Authorization', ''), f'Bearer {CRON_SECRET}'):
+                raise RequestError(401, 'Unauthorized.')
+            deleted = STORE.update('bookings', [], prune_bookings)
+            return self.send_json(200, {'ok': True, 'deletedCount': len(deleted)})
         if path == '/api/admin/bookings':
             self.require_admin()
-            bookings = sorted(read_bookings(), key=lambda b: b.get('createdAt',''))
+            bookings = sorted(read_bookings(), key=lambda b: b.get('createdAt',''), reverse=True)
             return self.send_json(200, {'bookings': bookings})
         if path == '/api/admin/accepted-bookings':
             self.require_admin()
@@ -593,86 +636,42 @@ class Handler(SimpleHTTPRequestHandler):
             return self.update_booking(match.group(1))
         return self.send_json(404, {'error': 'Not found.'})
 
+    @api_errors
+    def do_DELETE(self):
+        path = unquote(urlparse(self.path).path)
+        match = re.fullmatch(r'/api/admin/bookings/([A-Za-z0-9-]+)', path)
+        if not match:
+            return self.send_json(404, {'error': 'Not found.'})
+        self.require_same_origin()
+        self.require_admin()
+        data = self.json_body()
+        if not isinstance(data, dict) or data.get('confirmDelete') is not True:
+            raise RequestError(400, 'Confirm permanent deletion first.')
+        def remove(bookings):
+            target = checked_target(bookings, match.group(1), data)
+            if target.get('retentionHold'):
+                raise RequestError(409, 'Resolve the issue and remove the retention hold before deleting this request.')
+            bookings.remove(target)
+        STORE.update('bookings', [], remove)
+        return self.send_json(200, {'ok': True})
+
     def create_booking(self):
         data = self.json_body()
         if not isinstance(data, dict):
             return self.send_json(400, {'error': 'Invalid request.'})
 
-        name = clean(data.get('name'), 80)
-        email = clean(data.get('email'), 120).lower()
-        phone = clean(data.get('phone'), 30)
-        date = clean(data.get('date'), 10)
-        time = clean(data.get('time'), 5)
-        notes = clean(data.get('notes'), 800)
-        raw_services = data.get('services') or []
-
-        if not all([name, email, phone, date, time]) or not valid_email(email):
-            return self.send_json(400, {'error': 'Please complete your name, email, phone, date and time.'})
-        try:
-            requested = datetime.strptime(f'{date} {time}', '%Y-%m-%d %H:%M')
-            if requested.replace(tzinfo=ZoneInfo('Europe/London')) < datetime.now(ZoneInfo('Europe/London')):
-                return self.send_json(400, {'error': 'Please choose a future date and time.'})
-            requested_minutes = requested.hour * 60 + requested.minute
-            opening_minutes = 11 * 60 if requested.weekday() == 6 else 10 * 60
-            closing_minutes = 19 * 60
-            if requested_minutes < opening_minutes or requested_minutes > closing_minutes:
-                hours = '11am and 7pm on Sunday' if requested.weekday() == 6 else '10am and 7pm, Monday to Saturday'
-                return self.send_json(400, {'error': f'Please choose a time between {hours}.'})
-        except ValueError:
-            return self.send_json(400, {'error': 'Please choose a valid date and time.'})
-
-        if not isinstance(raw_services, list) or not raw_services or len(raw_services) > 20:
-            return self.send_json(400, {'error': 'Please choose at least one treatment.'})
-        services = []
-        seen = set()
-        for raw in raw_services:
-            if not isinstance(raw, dict):
-                return self.send_json(400, {'error': 'Invalid treatment selection.'})
-            try:
-                sig = service_signature(raw)
-            except Exception:
-                return self.send_json(400, {'error': 'Invalid treatment selection.'})
-            if sig not in ALLOWED:
-                return self.send_json(400, {'error': 'A treatment or price did not match the current price list. Refresh the page and try again.'})
-            if sig in seen:
-                continue
-            seen.add(sig)
-            services.append({'category': sig[0], 'name': sig[1], 'variant': sig[2], 'price': sig[3]})
-
-        if requested.weekday() == 6 and any(s['category'] != 'Nails' for s in services):
-            return self.send_json(400, {'error': 'Sundays are available for nail treatments only. Please choose Nails or select another day.'})
-
-        total = round(sum(s['price'] for s in services), 2)
+        fields = validate_booking(data, ALLOWED, valid_email)
         stamp = datetime.now(timezone.utc).isoformat()
         booking_id = 'TLS-' + uuid.uuid4().hex
         booking = {
-            'id': booking_id,
-            'status': 'pending',
-            'createdAt': stamp,
-            'name': name,
-            'email': email,
-            'phone': phone,
-            'date': date,
-            'time': time,
-            'notes': notes,
-            'services': services,
-            'total': total,
-            'statusUpdatedAt': None,
-            'studioNote': ''
+            **fields, 'id': booking_id, 'status': 'pending', 'createdAt': stamp,
+            'updatedAt': stamp, 'statusUpdatedAt': None, 'studioNote': '',
+            'internalNote': '', 'retentionHold': False, 'holdReason': '',
+            'retentionVersion': 1, 'revision': 0,
         }
         def insert(bookings):
-            requested_treatments = {treatment_key(service) for service in services}
-            for existing in bookings:
-                if existing.get('date') != date or existing.get('time') != time:
-                    continue
-                if existing.get('status') not in ('pending', 'confirmed'):
-                    continue
-                clashes = requested_treatments & booking_treatment_keys(existing)
-                if clashes:
-                    conflict_names = ', '.join(sorted({key[1] + (f' — {key[2]}' if key[2] else '') for key in clashes}))
-                    raise RequestError(409, f'That time already has a request or confirmed booking for {conflict_names}. You can choose a different treatment at the same time, or choose another time.'
-                    )
-
+            prune_bookings(bookings)
+            check_availability(bookings, booking)
             bookings.append(booking)
 
         STORE.update('bookings', [], insert)
@@ -681,53 +680,71 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             print('Email notification error:', type(e).__name__)
             email_sent = False
-        return self.send_json(201, {'ok': True, 'bookingId': booking_id, 'total': total, 'emailSent': email_sent})
+        return self.send_json(201, {'ok': True, 'bookingId': booking_id, 'total': fields['total'], 'emailSent': email_sent})
 
     def update_booking(self, booking_id):
         data = self.json_body()
         if not isinstance(data, dict):
             raise RequestError(400, 'Invalid request.')
-        status = clean(data.get('status'), 20)
-        note = clean(data.get('note'), 1200)
-        if status not in ('confirmed', 'declined'):
-            return self.send_json(400, {'error': 'Status must be confirmed or declined.'})
+        notify = data.get('notifyCustomer', False)
+        if type(notify) is not bool:
+            raise RequestError(400, 'Choose whether to send a customer email.')
+        customer_message = text_field(data, 'customerMessage', 1200)
         def change(bookings):
-            target = None
-            for b in bookings:
-                if b.get('id') == booking_id:
-                    target = b
-                    break
-            if not target:
-                raise RequestError(404, 'Booking not found.')
-
-            # Different treatments may share the same date/time. Only prevent a
-            # confirmation when another confirmed booking contains an exact same
-            # treatment (category + name + variant) in that slot.
-            if status == 'confirmed':
-                target_treatments = booking_treatment_keys(target)
-                for existing in bookings:
-                    if existing.get('id') == booking_id or existing.get('status') != 'confirmed':
-                        continue
-                    if existing.get('date') != target.get('date') or existing.get('time') != target.get('time'):
-                        continue
-                    clashes = target_treatments & booking_treatment_keys(existing)
-                    if clashes:
-                        conflict_names = ', '.join(sorted({key[1] + (f' — {key[2]}' if key[2] else '') for key in clashes}))
-                        raise RequestError(409, f'Cannot confirm this booking because {conflict_names} is already confirmed for {target.get("date")} at {target.get("time")}. Different treatments can still be confirmed at that same time.'
-                        )
-
-            target['status'] = status
-            target['statusUpdatedAt'] = datetime.now(timezone.utc).isoformat()
-            target['studioNote'] = note
+            target = checked_target(bookings, booking_id, data)
+            previous_status = target.get('status')
+            status = data.get('status', previous_status)
+            if status not in ('pending', 'confirmed', 'declined', 'cancelled'):
+                raise RequestError(400, 'Choose a valid booking status.')
+            candidate = {**target, **{key: data[key] for key in
+                         ('name', 'email', 'phone', 'date', 'time', 'notes', 'services') if key in data}}
+            schedule_changed = any(candidate.get(key) != target.get(key) for key in ('date', 'time', 'services'))
+            becoming_active = status in ('pending', 'confirmed') and status != previous_status
+            candidate.update(validate_booking(candidate, ALLOWED, valid_email, previous=target,
+                             require_future=(schedule_changed or becoming_active)))
+            candidate['status'] = status
+            if 'internalNote' in data:
+                candidate['internalNote'] = text_field(data, 'internalNote', 1200)
+            if status in ('declined', 'cancelled') and not candidate.get('internalNote'):
+                raise RequestError(400, 'Enter an internal reason for declining or cancelling this booking.')
+            if 'retentionHold' in data:
+                if type(data['retentionHold']) is not bool:
+                    raise RequestError(400, 'Choose whether to keep this booking for an unresolved issue.')
+                candidate['retentionHold'] = data['retentionHold']
+                candidate['holdReason'] = text_field(data, 'holdReason', 500) if data['retentionHold'] else ''
+                if candidate['retentionHold'] and not candidate['holdReason']:
+                    raise RequestError(400, 'Enter the reason this booking must be kept.')
+            if schedule_changed or becoming_active:
+                check_availability(bookings, candidate)
+            stamp = datetime.now(timezone.utc).isoformat()
+            if status != previous_status:
+                candidate['statusUpdatedAt'] = stamp
+                if status in ('declined', 'cancelled'):
+                    # Re-editing a closed request must not extend its retention.
+                    if previous_status not in ('declined', 'cancelled'):
+                        candidate['closedAt'] = stamp
+                    else:
+                        candidate['closedAt'] = target.get('closedAt') or target.get('statusUpdatedAt') or stamp
+                else:
+                    candidate.pop('closedAt', None)
+            candidate['updatedAt'] = stamp
+            candidate['revision'] = target.get('revision', 0) + 1
+            if notify:
+                candidate['studioNote'] = customer_message
+            target.clear()
+            target.update(candidate)
             return dict(target), len(accepted_bookings(bookings))
 
         target, accepted_count = STORE.update('bookings', [], change)
-        try:
-            email_sent = customer_status_email(target, status, note)
-        except Exception as e:
-            print('Customer email error:', type(e).__name__)
-            email_sent = False
-        return self.send_json(200, {'ok': True, 'emailSent': email_sent, 'acceptedCount': accepted_count})
+        email_sent = None
+        if notify:
+            try:
+                email_sent = customer_status_email(target, target['status'], customer_message)
+            except Exception as exc:
+                print('Customer email error:', type(exc).__name__)
+                email_sent = False
+        return self.send_json(200, {'ok': True, 'emailSent': email_sent,
+                                   'notificationRequested': notify, 'acceptedCount': accepted_count})
 
 
 def open_browser(port=PORT):

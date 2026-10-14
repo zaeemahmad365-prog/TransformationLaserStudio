@@ -19,6 +19,50 @@ ADMIN
   overall per fifteen minutes, including successful attempts.
 - Booking lists, status changes and Excel exports all require a valid session.
 
+MANAGING REQUESTS
+- Pending is the default view. Use Show requests to switch to Confirmed,
+  Denied / Cancelled or All requests. Counts update after each change.
+- Every view shows the newest original submissions first. Edits preserve the
+  booking ID and original received time.
+- Edit / reschedule changes the customer's contact details, date, time,
+  treatments or notes. Reopen a denied/cancelled request as Pending, or choose
+  Confirmed when the customer has agreed. Conflicting treatments are blocked.
+- Decline an unconfirmed request or cancel a confirmed appointment with an
+  internal reason. Internal notes and hold reasons never appear in emails.
+- Email the customer is OFF by default. Select it and optionally add a customer
+  message, then choose Save and email customer. Otherwise contact them separately.
+  If delivery fails, the change remains saved and Admin reports the failure.
+- Delete permanently removes the whole request, including its notes and reason.
+  It requires a confirmation and sends no email. Use Decline / Cancel for a
+  service that cannot be provided. Deletion is useful for spam and duplicates.
+- A stale open form cannot overwrite a newer edit. Close it and refresh first.
+
+90-DAY RETENTION
+- Confirmed and pending requests: 90 days after the appointment in London time.
+- Denied/cancelled requests: 90 days after closing, even if the requested date
+  is later. Re-editing a closed request does not extend this period.
+- Rescheduling an active request recalculates the date. Upcoming active requests
+  are never expired just because the original submission is old.
+- Legacy records get one seven-day review period on first access after rollout.
+  Use All requests to check them. Invalid/missing dates are retained for review.
+- Use Edit > Keep for an unresolved issue, with a reason, to suspend cleanup.
+  Review holds when the issue is resolved. Removing an overdue hold makes that
+  record eligible for the next cleanup. Held requests cannot be manually deleted.
+- Cleanup runs atomically when lists/exports are read or a new booking is saved.
+  vercel.json also schedules daily cleanup at 03:00 UTC (Hobby may run within
+  that hour). This schedule REQUIRES the private CRON_SECRET setting described
+  in DEPLOYMENT.md. Without it the scheduled endpoint fails closed; cleanup on
+  normal booking activity still works, but idle-site deletion is not guaranteed.
+- Removal dates are shown on each request. No deleted booking archive is kept.
+- This policy covers website requests, not separately maintained treatment,
+  consent or financial records. See public/privacy.html for the customer notice.
+- Email notifications, downloaded spreadsheets, local data/outbox previews,
+  local data/exports files and provider backups are separate copies. The app
+  cannot recall emails or downloaded files. Review/delete booking-only copies
+  under the same 90-day policy, excluding necessary unresolved-issue records.
+  Configure provider backup retention; restore into private storage and run
+  cleanup before normal access. Review manually deleted records after a restore.
+
 VERIFY LOGGED-OUT ACCESS
 1. Close any existing Incognito/private windows, then open a new one. Visit the
    admin bookmark without signing in. Expect the login form and no booking data.
@@ -72,8 +116,8 @@ SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD and SMTP_FROM for email delivery.
 For Gmail, use a Google App Password, never the account's normal password.
 The current SMTP implementation uses STARTTLS (normally port 587).
 
-A new request triggers a studio notification. Confirm/decline triggers a customer
-email. If sending fails, the booking remains saved and Admin tells you to contact
+A new request triggers a studio notification. An admin change sends a customer
+email only when explicitly selected. If sending fails, the booking remains saved and Admin tells you to contact
 the customer directly. Email is best effort; there is no automatic retry queue.
 Confirmation emails include an HTML version with assets/transformation-logo.png
 embedded beneath the contact details, plus a plain-text alternative. The logo is
