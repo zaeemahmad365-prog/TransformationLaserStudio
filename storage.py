@@ -60,7 +60,12 @@ class PostgresStore:
             settings = conninfo_to_dict(self.url)
             if self.require_tls and settings.get('sslmode') not in ('require', 'verify-ca', 'verify-full'):
                 settings['sslmode'] = 'require'
-            with psycopg.connect(**settings, connect_timeout=10) as connection:
+            connection = psycopg.connect(**settings, connect_timeout=10)
+        except (psycopg.Error, ValueError) as exc:
+            # Invalid connection settings can contain credentials too.
+            raise StorageUnavailable('Booking storage is unavailable.') from exc
+        try:
+            with connection:
                 # Bound locks/queries without relying on pooler startup options.
                 connection.execute("SET LOCAL statement_timeout = '15000'")
                 connection.execute("SET LOCAL lock_timeout = '10000'")
@@ -78,8 +83,10 @@ class PostgresStore:
                             connection.execute("SET LOCAL statement_timeout = '15000'")
                             connection.execute("SET LOCAL lock_timeout = '10000'")
                 yield connection
-        except (psycopg.Error, ValueError) as exc:
+        except psycopg.Error as exc:
             # Database exceptions can contain credentials. Do not return/log them.
+            # Application validation (including ValueError subclasses) must reach
+            # the API unchanged after the connection rolls back the transaction.
             raise StorageUnavailable('Booking storage is unavailable.') from exc
 
     def read(self, key, default):

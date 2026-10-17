@@ -34,7 +34,7 @@ PUBLIC = ROOT / 'public'
 DATA = Path(os.getenv('TLS_DATA_DIR', str(ROOT / 'data')))
 EXPORTS = DATA / 'exports'
 OUTBOX = DATA / 'outbox'
-APP_BUILD = '2026-10-14-admin-booking-management'
+APP_BUILD = '2026-10-17-booking-validation-errors'
 ON_VERCEL = os.getenv('VERCEL') == '1'
 
 
