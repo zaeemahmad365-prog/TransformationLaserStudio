@@ -358,6 +358,56 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertTrue(self.store.read('bookings', [])[0]['retentionHold'])
 
+    @unittest.skipUnless(os.getenv('TEST_DATABASE_URL'), 'TEST_DATABASE_URL is not set')
+    def test_postgres_cancelled_reopen_validation_and_rescheduling(self):
+        prefix = 'reopen-test-' + uuid.uuid4().hex + '-'
+
+        class ScopedPostgresStore(PostgresStore):
+            def read(self, key, default):
+                return super().read(prefix + key, default)
+
+            def update(self, key, default, change):
+                return super().update(prefix + key, default, change)
+
+        store = ScopedPostgresStore(os.environ['TEST_DATABASE_URL'], require_tls=False)
+        try:
+            with patch.object(server, 'STORE', store):
+                booking_id = self.create_one()
+                cookie = self.login()
+                self.assertEqual(self.edit(booking_id, cookie, expectedRevision=0, status='confirmed')[0], 200)
+                self.assertEqual(self.edit(booking_id, cookie, expectedRevision=1, status='cancelled',
+                                          internalNote='Staff unavailable')[0], 200)
+                # Reopening must require a future appointment, even when the old
+                # date was left unchanged in the editor.
+                store.update('bookings', [], lambda rows: rows[0].update(date='2000-01-01'))
+                cancelled = store.read('bookings', [])[0]
+                for changes, message in [
+                    ({}, 'future date and time'),
+                    ({'date': '2099-06-15', 'time': '09:00'}, 'time between'),
+                    ({'date': '2099-06-15', 'email': 'invalid'}, 'name, email, phone'),
+                    ({'date': '2099-06-15', 'services': []}, 'one and twenty treatments'),
+                ]:
+                    with self.subTest(changes=changes):
+                        status, _, body = self.edit(booking_id, cookie, expectedRevision=2,
+                                                   status='pending', **changes)
+                        self.assertEqual(status, 400, body)
+                        self.assertIn(message, json.loads(body)['error'])
+                        self.assertEqual(store.read('bookings', [])[0], cancelled)
+                status, _, body = self.edit(booking_id, cookie, expectedRevision=2,
+                                           status='pending', date='2099-06-15')
+                self.assertEqual(status, 200, body)
+                saved = store.read('bookings', [])[0]
+                self.assertEqual(saved['status'], 'pending')
+                self.assertEqual(saved['revision'], 3)
+                self.assertNotIn('closedAt', saved)
+                self.assertEqual(saved['internalNote'], 'Staff unavailable')
+                self.assertEqual(saved['createdAt'], cancelled['createdAt'])
+                server.customer_status_email.assert_not_called()
+        finally:
+            with store.connection() as connection:
+                connection.execute('DELETE FROM tls_documents WHERE key IN (%s, %s)',
+                                   (prefix + 'bookings', prefix + 'admin-auth'))
+
 
 
 class EmailTests(unittest.TestCase):

@@ -1,3 +1,3 @@
 Transformation Laser Studio
-Build: 2026-10-14-admin-booking-management
+Build: 2026-10-17-booking-validation-errors
 See README.txt for admin access and booking retention.
